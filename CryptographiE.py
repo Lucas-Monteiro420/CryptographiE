@@ -1,16 +1,22 @@
-import secrets
+import datetime
+import os
+import smtplib
 import threading
+import time
 import tkinter as tk
 import webbrowser
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from tkinter import filedialog, messagebox, scrolledtext, ttk, simpledialog
-import pyperclip
-from cryptography.fernet import Fernet
-import os
-import datetime
 import matplotlib.pyplot as plt
+import numpy as np
+import winsound
+from cryptography.fernet import Fernet
 from matplotlib.backends._backend_tk import NavigationToolbar2Tk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
+from matplotlib.figure import Figure
+from scipy import signal
+from scipy.io import wavfile
 
 
 # Gera uma chave e salva em um arquivo (execute uma única vez)
@@ -744,6 +750,8 @@ def limpar_dados_estatisticas():
         except Exception as e:
             messagebox.showerror("Erro", f"Não foi possível limpar os dados: {str(e)}")
 
+
+
 # Criando a interface gráfica com Tkinter
 janela = tk.Tk()
 janela.title("CryptographiE")
@@ -773,10 +781,36 @@ aba_arquivos.rowconfigure(0, weight=1)
 
 # Aba 3: Estatísticas
 aba_estatisticas = ttk.Frame(notebook)
-notebook.add(aba_estatisticas, text="Estatísticas")
+notebook.add(aba_estatisticas, text="Estatísticas de Criptografia")
 aba_estatisticas.columnconfigure(0, weight=1)
 aba_estatisticas.rowconfigure(0, weight=1)
 
+# Aba 4: Código Morse
+aba_morse = ttk.Frame(notebook)
+notebook.add(aba_morse, text="Código Morse")
+
+# Configure o aba_morse para preencher todo o espaço disponível
+aba_morse.columnconfigure(0, weight=1)
+aba_morse.rowconfigure(0, weight=1)
+
+# Criar um canvas com scrollbar
+canvas_morse = tk.Canvas(aba_morse)
+canvas_morse.grid(row=0, column=0, sticky="nsew")
+
+scrollbar_morse = ttk.Scrollbar(aba_morse, orient="vertical", command=canvas_morse.yview)
+scrollbar_morse.grid(row=0, column=1, sticky="ns")
+
+canvas_morse.configure(yscrollcommand=scrollbar_morse.set)
+
+# Frame para conter os widgets
+scrollable_frame = ttk.Frame(canvas_morse)
+scrollable_frame_window = canvas_morse.create_window((0, 0), window=scrollable_frame, anchor="nw", tags="scrollable_frame")
+
+# Configure o scrollable_frame para ter a mesma largura que o canvas
+def configure_scrollable_frame(event):
+    canvas_morse.itemconfig("scrollable_frame", width=event.width)
+
+canvas_morse.bind("<Configure>", configure_scrollable_frame)
 
 # Conteúdo da Aba 1: Criptografia de Texto
 # Frame para área de entrada de texto
@@ -1140,20 +1174,20 @@ def atualizar_graficos():
         ax2.text(0.5, 0.5, 'Sem dados', ha='center', va='center', fontsize=8)
 
     # Gráfico 3: Operações por dia - Usando espaço inferior
-    ax3 = fig.add_subplot(gs[1, :])  # Span across both columns
+    ax3 = fig.add_subplot(gs[1, :])  
 
     # Obter últimos 4 dias
     dias = list(estatisticas.operacoes_por_dia.keys())
-    dias.sort()  # Ordenar por data
+    dias.sort()  
 
     if len(dias) > 4:
-        dias = dias[-4:]  # Últimos 4 dias
+        dias = dias[-4:]  
 
     cripto_por_dia = [estatisticas.operacoes_por_dia[dia]['cripto'] for dia in dias]
     descripto_por_dia = [estatisticas.operacoes_por_dia[dia]['descripto'] for dia in dias]
 
     # Formatação das datas para o gráfico
-    dias_formatados = [dia.split('-')[2] + '/' + dia.split('-')[1] for dia in dias]  # Formato DD/MM
+    dias_formatados = [dia.split('-')[2] + '/' + dia.split('-')[1] for dia in dias]  
 
     # Garantir que há pelo menos um dia para plotar
     if dias:
@@ -1219,8 +1253,8 @@ def atualizar_graficos():
         height = event.height
 
         # Calcular novas dimensões para a figura, mantendo proporção mas com tamanho reduzido
-        new_width = min(width / 100, 7)  # Converter pixels para polegadas
-        new_height = min(height / 100, 4.2)  # Converter pixels para polegadas
+        new_width = min(width / 100, 7)  
+        new_height = min(height / 100, 4.2)  
 
         # Atualizar o tamanho da figura
         fig.set_size_inches(new_width, new_height)
@@ -1296,6 +1330,937 @@ def exportar_estatisticas():
 # Inicializar a visualização de estatísticas
 atualizar_estatisticas()
 
+# Dicionário de conversão Morse
+MORSE_CODE_DICT = {
+    'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.',
+    'F': '..-.', 'G': '--.', 'H': '....', 'I': '..', 'J': '.---',
+    'K': '-.-', 'L': '.-..', 'M': '--', 'N': '-.', 'O': '---',
+    'P': '.--.', 'Q': '--.-', 'R': '.-.', 'S': '...', 'T': '-',
+    'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-', 'Y': '-.--',
+    'Z': '--..',
+    '0': '-----', '1': '.----', '2': '..---', '3': '...--', '4': '....-',
+    '5': '.....', '6': '-....', '7': '--...', '8': '---..', '9': '----.',
+    '.': '.-.-.-', ',': '--..--', '?': '..--..', "'": '.----.', '!': '-.-.--',
+    '/': '-..-.', '(': '-.--.', ')': '-.--.-', '&': '.-...', ':': '---...',
+    ';': '-.-.-.', '=': '-...-', '+': '.-.-.', '-': '-....-', '_': '..--.-',
+    '"': '.-..-.', '$': '...-..-', '@': '.--.-.'
+}
+
+# Inverter o dicionário para decodificação
+MORSE_CODE_REVERSE = {value: key for key, value in MORSE_CODE_DICT.items()}
+
+# Conteúdo da Aba 4: Código Morse
+
+# Frame para área de entrada de texto Morse
+frame_entrada_morse = tk.LabelFrame(scrollable_frame, text="Entrada", font=("Arial", 10))
+frame_entrada_morse.grid(row=0, column=0, sticky="nsew", pady=5, padx=5)
+frame_entrada_morse.columnconfigure(0, weight=1)
+frame_entrada_morse.rowconfigure(0, weight=1)
+
+# Área de entrada com ScrolledText
+entrada_morse = scrolledtext.ScrolledText(frame_entrada_morse, height=8)
+entrada_morse.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+
+# Botão para abrir arquivo na área de entrada Morse
+btn_abrir_morse = tk.Button(frame_entrada_morse, text="Abrir Arquivo",
+                            command=lambda: carregar_arquivo_morse())
+btn_abrir_morse.grid(row=1, column=0, sticky="e", padx=5, pady=2)
+
+# Frame para botões de operações Morse
+frame_botoes_morse = tk.Frame(scrollable_frame)
+frame_botoes_morse.grid(row=1, column=0, sticky="ew", pady=5, padx=5)
+frame_botoes_morse.columnconfigure(0, weight=1)
+frame_botoes_morse.columnconfigure(1, weight=1)
+frame_botoes_morse.columnconfigure(2, weight=1)
+frame_botoes_morse.columnconfigure(3, weight=1)
+
+# Botões responsivos, usando grid para organização
+btn_texto_para_morse = tk.Button(frame_botoes_morse, text="Texto → Morse",
+                                 command=lambda: converter_para_morse(), padx=5)
+btn_texto_para_morse.grid(row=0, column=0, sticky="ew", padx=2)
+
+btn_morse_para_texto = tk.Button(frame_botoes_morse, text="Morse → Texto",
+                                 command=lambda: converter_para_texto(), padx=5)
+btn_morse_para_texto.grid(row=0, column=1, sticky="ew", padx=2)
+
+btn_limpar_morse = tk.Button(frame_botoes_morse, text="Limpar",
+                             command=lambda: limpar_texto_morse(), bg="lightgray", padx=5)
+btn_limpar_morse.grid(row=0, column=2, sticky="ew", padx=2)
+
+btn_salvar_morse = tk.Button(frame_botoes_morse, text="Salvar",
+                             command=lambda: salvar_arquivo_morse(), padx=5)
+btn_salvar_morse.grid(row=0, column=3, sticky="ew", padx=2)
+
+# Frame para configurações adicionais
+frame_config_morse = tk.Frame(scrollable_frame)
+frame_config_morse.grid(row=2, column=0, sticky="ew", pady=2, padx=5)
+frame_config_morse.columnconfigure(0, weight=1)
+frame_config_morse.columnconfigure(1, weight=2)
+frame_config_morse.columnconfigure(2, weight=1)
+frame_config_morse.columnconfigure(3, weight=2)
+
+# Separadores para código Morse
+lbl_separador_letras = tk.Label(frame_config_morse, text="Separador de letras:")
+lbl_separador_letras.grid(row=0, column=0, sticky="e", padx=2)
+
+entrada_sep_letras = tk.Entry(frame_config_morse, width=5)
+entrada_sep_letras.insert(0, " ")  # Espaço por padrão
+entrada_sep_letras.grid(row=0, column=1, sticky="w", padx=2)
+
+lbl_separador_palavras = tk.Label(frame_config_morse, text="Separador de palavras:")
+lbl_separador_palavras.grid(row=0, column=2, sticky="e", padx=2)
+
+entrada_sep_palavras = tk.Entry(frame_config_morse, width=5)
+entrada_sep_palavras.insert(0, "   ")  # Três espaços por padrão
+entrada_sep_palavras.grid(row=0, column=3, sticky="w", padx=2)
+
+# Frame para configurações de som
+frame_som_morse = tk.LabelFrame(scrollable_frame, text="Configurações de Som", font=("Arial", 10))
+frame_som_morse.grid(row=3, column=0, sticky="ew", pady=5, padx=5)
+frame_som_morse.columnconfigure(0, weight=1)
+frame_som_morse.columnconfigure(1, weight=1)
+frame_som_morse.columnconfigure(2, weight=1)
+frame_som_morse.columnconfigure(3, weight=1)
+
+# Configurações de velocidade (WPM - Words Per Minute)
+lbl_wpm = tk.Label(frame_som_morse, text="Velocidade (WPM):")
+lbl_wpm.grid(row=0, column=0, sticky="e", padx=2, pady=2)
+
+# Variável para armazenar o valor do slider
+wpm_var = tk.IntVar()
+wpm_var.set(15)  # Valor padrão: 15 WPM
+
+# Slider para ajustar a velocidade
+slider_wpm = tk.Scale(frame_som_morse, from_=5, to=30, orient="horizontal",
+                      variable=wpm_var, length=150)
+slider_wpm.grid(row=0, column=1, sticky="w", padx=2, pady=2)
+
+# Configurações de frequência (Hz)
+lbl_freq = tk.Label(frame_som_morse, text="Frequência (Hz):")
+lbl_freq.grid(row=0, column=2, sticky="e", padx=2, pady=2)
+
+# Variável para armazenar o valor da frequência
+freq_var = tk.IntVar()
+freq_var.set(700)  # Valor padrão: 700 Hz
+
+# Slider para ajustar a frequência
+slider_freq = tk.Scale(frame_som_morse, from_=500, to=1000, orient="horizontal",
+                       variable=freq_var, length=150)
+slider_freq.grid(row=0, column=3, sticky="w", padx=2, pady=2)
+
+# Configurações de volume
+lbl_volume = tk.Label(frame_som_morse, text="Volume:")
+lbl_volume.grid(row=1, column=0, sticky="e", padx=2, pady=2)
+
+# Variável para armazenar o valor do volume
+volume_var = tk.DoubleVar()
+volume_var.set(0.5)  # Valor padrão: 50%
+
+# Slider para ajustar o volume
+slider_volume = tk.Scale(frame_som_morse, from_=0.0, to=1.0, resolution=0.1, orient="horizontal",
+                         variable=volume_var, length=150)
+slider_volume.grid(row=1, column=1, sticky="w", padx=2, pady=2)
+
+# Frame para botões de reprodução
+frame_reprod_morse = tk.Frame(frame_som_morse)
+frame_reprod_morse.grid(row=1, column=2, columnspan=2, sticky="ew", padx=2, pady=2)
+frame_reprod_morse.columnconfigure(0, weight=1)
+frame_reprod_morse.columnconfigure(1, weight=1)
+
+# Botão para reproduzir o código Morse
+btn_reproduzir = tk.Button(frame_reprod_morse, text="▶ Reproduzir",
+                           command=lambda: reproduzir_morse(), bg="lightgreen")
+btn_reproduzir.grid(row=0, column=0, sticky="ew", padx=2)
+
+# Botão para parar a reprodução
+btn_parar = tk.Button(frame_reprod_morse, text="■ Parar",
+                      command=lambda: parar_reproducao(), bg="lightcoral")
+btn_parar.grid(row=0, column=1, sticky="ew", padx=2)
+
+# Frame para área de saída de texto Morse
+frame_saida_morse = tk.LabelFrame(scrollable_frame, text="Resultado", font=("Arial", 10))
+frame_saida_morse.grid(row=4, column=0, sticky="nsew", pady=5, padx=5)
+frame_saida_morse.columnconfigure(0, weight=1)
+frame_saida_morse.rowconfigure(0, weight=1)
+
+# Área de saída com ScrolledText
+saida_morse = scrolledtext.ScrolledText(frame_saida_morse, height=8)
+saida_morse.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+
+# Frame para visualização de onda
+frame_visual_morse = tk.LabelFrame(scrollable_frame, text="Visualização de Onda", font=("Arial", 10))
+frame_visual_morse.grid(row=5, column=0, sticky="nsew", pady=5, padx=5)
+frame_visual_morse.columnconfigure(0, weight=1)
+frame_visual_morse.rowconfigure(0, weight=1)
+
+# Criar área para a visualização usando matplotlib
+fig = Figure(figsize=(10, 2), dpi=80)
+ax = fig.add_subplot(111)
+ax.set_ylim(-1.2, 1.2)
+ax.set_xlim(0, 100)
+ax.set_yticks([-1, 0, 1])
+ax.set_yticklabels(['', '', ''])
+ax.set_xticks([])
+ax.grid(True, linestyle='--', alpha=0.7)
+line, = ax.plot([], [], lw=2, color='red')
+
+# Adicionar canvas do matplotlib ao frame
+canvas = FigureCanvasTkAgg(fig, master=frame_visual_morse)
+canvas_widget = canvas.get_tk_widget()
+canvas_widget.grid(row=0, column=0, sticky="nsew", padx=5, pady=5)
+
+# Variáveis para controle da visualização
+wave_data = []
+wave_time = []
+max_time_window = 100
+wave_active = False
+wave_thread = None
+
+# Frame para tabela de referência
+frame_ref_morse = tk.LabelFrame(scrollable_frame, text="Tabela de Referência", font=("Arial", 10))
+frame_ref_morse.grid(row=6, column=0, sticky="ew", pady=5, padx=5)
+
+# Botão para exibir/ocultar tabela de referência
+btn_mostrar_tabela = tk.Button(frame_ref_morse, text="Mostrar Tabela Morse",
+                               command=lambda: mostrar_tabela_morse())
+btn_mostrar_tabela.pack(fill="x", padx=5, pady=5)
+
+# Variável para controlar a reprodução do som
+reproduzindo = False
+thread_reproducao = None
+
+# Funções para operações com código Morse
+def converter_para_morse():
+    """Converte texto normal para código Morse"""
+    texto = entrada_morse.get("1.0", tk.END).strip().upper()
+    separador_letras = entrada_sep_letras.get()
+    separador_palavras = entrada_sep_palavras.get()
+
+    # Se os separadores estiverem vazios, usar os padrões
+    if not separador_letras:
+        separador_letras = " "
+    if not separador_palavras:
+        separador_palavras = "   "  
+
+    # Converter o texto para código Morse
+    resultado = []
+    for palavra in texto.split():
+        palavra_morse = []
+        for caractere in palavra:
+            if caractere in MORSE_CODE_DICT:
+                palavra_morse.append(MORSE_CODE_DICT[caractere])
+        resultado.append(separador_letras.join(palavra_morse))
+
+    morse_final = separador_palavras.join(resultado)
+
+    # Exibir o resultado
+    saida_morse.delete("1.0", tk.END)
+    saida_morse.insert("1.0", morse_final)
+
+def converter_para_texto():
+    """Converte código Morse para texto normal"""
+    morse_code = entrada_morse.get("1.0", tk.END).strip()
+
+    # Tentar detectar separadores automaticamente
+    sep_letras = entrada_sep_letras.get()
+    sep_palavras = entrada_sep_palavras.get()
+
+    # Se não houver separadores definidos, tentar detectar
+    if not sep_letras or not sep_palavras:
+        # Padrão comum em código Morse: espaço entre símbolos, 3 espaços entre palavras
+        sep_letras = " "
+        sep_palavras = "   "  
+
+    # Tentar processar o código Morse
+    resultado = []
+    for palavra in morse_code.split(sep_palavras):
+        palavra_texto = []
+        for simbolo in palavra.split(sep_letras):
+            if simbolo in MORSE_CODE_REVERSE:
+                palavra_texto.append(MORSE_CODE_REVERSE[simbolo])
+            elif simbolo:  
+                palavra_texto.append("?")
+        resultado.append("".join(palavra_texto))
+
+    texto_final = " ".join(resultado)
+
+    # Exibir o resultado
+    saida_morse.delete("1.0", tk.END)
+    saida_morse.insert("1.0", texto_final)
+
+def limpar_texto_morse():
+    """Limpa as áreas de texto da aba Morse"""
+    entrada_morse.delete("1.0", tk.END)
+    saida_morse.delete("1.0", tk.END)
+
+def carregar_arquivo_morse():
+    """Carrega um arquivo de texto na área de entrada Morse"""
+    arquivo = filedialog.askopenfilename(
+        title="Abrir Arquivo de Texto",
+        filetypes=(("Arquivos de Texto", "*.txt"), ("Todos os Arquivos", "*.*"))
+    )
+
+    if arquivo:
+        try:
+            with open(arquivo, "r", encoding="utf-8") as f:
+                conteudo = f.read()
+                entrada_morse.delete("1.0", tk.END)
+                entrada_morse.insert("1.0", conteudo)
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao abrir o arquivo: {e}")
+
+def salvar_arquivo_morse():
+    """Salva o conteúdo da área de saída Morse em um arquivo"""
+    arquivo = filedialog.asksaveasfilename(
+        title="Salvar Como",
+        defaultextension=".txt",
+        filetypes=(("Arquivos de Texto", "*.txt"), ("Todos os Arquivos", "*.*"))
+    )
+
+    if arquivo:
+        try:
+            with open(arquivo, "w", encoding="utf-8") as f:
+                conteudo = saida_morse.get("1.0", tk.END)
+                f.write(conteudo)
+            messagebox.showinfo("Sucesso", f"Arquivo salvo com sucesso: {arquivo}")
+        except Exception as e:
+            messagebox.showerror("Erro", f"Erro ao salvar o arquivo: {e}")
+
+def reproduzir_morse():
+    """Reproduz o código Morse como som"""
+    global reproduzindo, thread_reproducao
+
+    # Parar reprodução anterior se estiver em andamento
+    if reproduzindo:
+        parar_reproducao()
+
+    morse_code = saida_morse.get("1.0", tk.END).strip()
+
+    # Se não houver código Morse, tentar converter da entrada
+    if not morse_code:
+        converter_para_morse()
+        morse_code = saida_morse.get("1.0", tk.END).strip()
+
+    if not morse_code:
+        messagebox.showwarning("Aviso", "Nenhum código Morse para reproduzir.")
+        return
+
+    # Obter configurações de som
+    wpm = wpm_var.get()
+    frequencia = freq_var.get()
+    volume = volume_var.get()
+
+    # Calcular durações com base no WPM
+    # Fórmula padrão: dot_duration = 1.2 / WPM (em segundos)
+    dot_duration = 1.2 / wpm
+    dash_duration = dot_duration * 3
+    symbol_space = dot_duration  # Espaço entre símbolos (ponto/traço)
+    letter_space = dot_duration * 3  # Espaço entre letras
+    word_space = dot_duration * 7  # Espaço entre palavras
+
+    # Iniciar thread de reprodução
+    reproduzindo = True
+    thread_reproducao = threading.Thread(target=tocar_morse,
+                                         args=(morse_code, dot_duration, dash_duration,
+                                               symbol_space, letter_space, word_space,
+                                               frequencia, volume))
+    thread_reproducao.daemon = True
+    thread_reproducao.start()
+
+def tocar_morse(morse_code, dot_duration, dash_duration, symbol_space,
+                letter_space, word_space, frequencia, volume):
+    """Função para tocar o código Morse em uma thread separada e visualizar a onda"""
+    global reproduzindo, wave_data, wave_time, wave_active
+
+    # Limpar dados anteriores
+    wave_data = []
+    wave_time = []
+    current_time = 0
+    wave_active = True
+
+    # Iniciar thread de visualização
+    vis_thread = threading.Thread(target=atualizar_visualizacao)
+    vis_thread.daemon = True
+    vis_thread.start()
+
+    # Converter duração para milissegundos para o winsound
+    dot_ms = int(dot_duration * 1000)
+    dash_ms = int(dash_duration * 1000)
+
+    # Verificar se é Windows (para winsound)
+    is_windows = hasattr(winsound, 'Beep')
+
+    # Função para tocar um tom e atualizar os dados de visualização
+    def tocar_tom(duracao_ms, duracao_s):
+        nonlocal current_time
+        if is_windows:
+            # Adicionar pontos para visualização (onda alta)
+            t_start = current_time
+            t_end = current_time + duracao_s
+
+            # Adicionar pontos para forma de onda "quadrada"
+            num_points = int(duracao_s * 50)  # 50 pontos por segundo para suavidade
+            for i in range(num_points):
+                t = t_start + (t_end - t_start) * i / num_points
+                wave_time.append(t)
+                wave_data.append(1)  # Amplitude do sinal alta
+
+            current_time = t_end
+
+            # Tocar o som
+            winsound.Beep(frequencia, duracao_ms)
+        else:
+            # Alternativa para outros sistemas
+            # Implementação similar usando outra biblioteca de som
+            pass
+
+    # Função para adicionar silêncio na visualização
+    def adicionar_silencio(duracao_s):
+        nonlocal current_time
+        t_start = current_time
+        t_end = current_time + duracao_s
+
+        # Adicionar pontos para forma de onda "quadrada"
+        num_points = int(duracao_s * 50)  # 50 pontos por segundo para suavidade
+        for i in range(num_points):
+            t = t_start + (t_end - t_start) * i / num_points
+            wave_time.append(t)
+            wave_data.append(0)  # Amplitude do sinal baixa (silêncio)
+
+        current_time = t_end
+        time.sleep(duracao_s)
+
+    sep_letras = entrada_sep_letras.get() or " "
+    sep_palavras = entrada_sep_palavras.get() or "   "
+
+    try:
+        for palavra in morse_code.split(sep_palavras):
+            for i, letra in enumerate(palavra.split(sep_letras)):
+                for j, simbolo in enumerate(letra):
+                    if not reproduzindo:
+                        break
+
+                    if simbolo == '.':
+                        tocar_tom(dot_ms, dot_duration)
+                    elif simbolo == '-':
+                        tocar_tom(dash_ms, dash_duration)
+
+                    # Espaço entre símbolos dentro da letra
+                    if j < len(letra) - 1 and reproduzindo:
+                        adicionar_silencio(symbol_space)
+
+                # Espaço entre letras
+                if i < len(palavra.split(sep_letras)) - 1 and reproduzindo:
+                    adicionar_silencio(letter_space)
+
+            # Espaço entre palavras
+            if reproduzindo:
+                adicionar_silencio(word_space)
+
+    except Exception as e:
+        print(f"Erro na reprodução: {e}")
+
+    finally:
+        reproduzindo = False
+        # Esperar um pouco antes de desativar a visualização
+        time.sleep(0.5)
+        wave_active = False
+
+# Função para atualizar a visualização
+def atualizar_visualizacao():
+    """Atualiza a visualização da onda de forma contínua"""
+    global wave_data, wave_time, wave_active
+
+    while wave_active:
+        try:
+            # Copiar os dados para evitar problemas de concorrência
+            current_data = wave_data.copy()
+            current_time = wave_time.copy()
+
+            if len(current_time) > 0:
+                # Ajustar a escala de tempo para mostrar apenas a janela mais recente
+                min_time = max(0, current_time[-1] - max_time_window) if current_time else 0
+                max_time = current_time[-1] if current_time else max_time_window
+
+                # Filtrar pontos dentro da janela visível
+                visible_indices = [i for i, t in enumerate(current_time) if t >= min_time]
+                visible_data = [current_data[i] for i in visible_indices]
+                visible_time = [current_time[i] for i in visible_indices]
+
+                # Atualizar o gráfico
+                if visible_time:
+                    ax.set_xlim(min_time, max_time)
+                    line.set_data(visible_time, visible_data)
+                    canvas.draw_idle()
+
+            # Curto atraso para não sobrecarregar a CPU
+            time.sleep(0.05)
+
+        except Exception as e:
+            print(f"Erro ao atualizar visualização: {e}")
+
+    # Limpar visualização ao finalizar
+    line.set_data([], [])
+    canvas.draw_idle()
+
+# Modificar a função parar_reproducao
+def parar_reproducao():
+    """Para a reprodução do código Morse e a visualização"""
+    global reproduzindo, wave_active
+    reproduzindo = False
+    wave_active = False
+    # Limpar visualização
+    line.set_data([], [])
+    canvas.draw_idle()
+    # Esperar um pouco para garantir que a thread pare
+    time.sleep(0.1)
+
+# Adicione esta função para carregar e processar arquivos de áudio Morse
+def carregar_audio_morse():
+    """Carrega um arquivo de áudio e tenta decodificar código Morse"""
+    arquivo = filedialog.askopenfilename(
+        title="Abrir Arquivo de Áudio",
+        filetypes=(("Arquivos de Áudio WAV", "*.wav"), ("Todos os Arquivos", "*.*"))
+    )
+
+    if not arquivo:
+        return
+
+    try:
+        # Mostrar indicador de processamento
+        saida_morse.delete("1.0", tk.END)
+        saida_morse.insert("1.0", "Processando áudio, por favor aguarde...")
+        saida_morse.update()
+
+        # Carregar o arquivo de áudio
+        taxa_amostragem, dados = wavfile.read(arquivo)
+
+        # Se o áudio for estéreo, converter para mono (média dos canais)
+        if len(dados.shape) > 1:
+            dados = np.mean(dados, axis=1)
+
+        # Normalizar dados para o intervalo [-1, 1]
+        dados = dados / np.max(np.abs(dados))
+
+        # Detectar o código Morse do áudio
+        codigo_morse = detectar_morse_do_audio(dados, taxa_amostragem)
+
+        # Exibir o código Morse detectado
+        entrada_morse.delete("1.0", tk.END)
+        entrada_morse.insert("1.0", codigo_morse)
+
+        # Tentar converter para texto
+        converter_para_texto()
+
+    except Exception as e:
+        messagebox.showerror("Erro", f"Erro ao processar o arquivo de áudio: {e}")
+        # Limpar mensagem de processamento
+        saida_morse.delete("1.0", tk.END)
+
+def detectar_morse_do_audio(dados, taxa_amostragem):
+    """Detecta código Morse a partir de dados de áudio"""
+    # 1. Pré-processamento do sinal
+    # Normalizar dados
+    dados = dados / np.max(np.abs(dados))
+
+    # Aplicar filtro passa-banda para frequências típicas de código Morse (500-1000 Hz)
+    sos = signal.butter(4, [400, 1200], 'bandpass', fs=taxa_amostragem, output='sos')
+    dados_filtrados = signal.sosfilt(sos, dados)
+
+    # Retificar o sinal
+    dados_abs = np.abs(dados_filtrados)
+
+    # 2. Envelope do sinal (detecção de amplitude)
+    # Filtro de envelope com parâmetro adaptável baseado na taxa de amostragem
+    tempo_envelope = 0.03  # 30ms - ajustável para diferentes velocidades de Morse
+    tamanho_janela = int(taxa_amostragem * tempo_envelope)
+    envelope = signal.convolve(dados_abs, np.ones(tamanho_janela) / tamanho_janela, mode='same')
+
+    # 3. Detecção adaptativa de limiar
+    # Usar método de Otsu para achar o limiar ideal (técnica de processamento de imagem adaptada)
+    hist, bin_edges = np.histogram(envelope, bins=100)
+    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+    # Método de Otsu simplificado para encontrar o limiar ótimo
+    peso1 = np.cumsum(hist)
+    peso2 = np.cumsum(hist[::-1])[::-1]
+    mean1 = np.cumsum(hist * bin_centers) / (peso1 + 1e-10)
+    mean2 = np.cumsum((hist * bin_centers)[::-1])[::-1] / (peso2 + 1e-10)
+    variancia = peso1[:-1] * peso2[1:] * (mean1[:-1] - mean2[1:]) ** 2
+
+    if len(variancia) > 0:
+        indice_otsu = np.argmax(variancia)
+        limiar = bin_centers[indice_otsu]
+    else:
+        # Fallback para método simples se Otsu falhar
+        limiar = np.mean(envelope) + np.std(envelope) * 0.8
+
+    # Aplicar um fator de segurança para evitar falsos positivos
+    limiar = limiar * 1.1
+
+    # 4. Binarização do sinal
+    sinal_binario = (envelope > limiar).astype(int)
+
+    # 5. Eliminação de pulsos muito curtos (ruídos)
+    duracao_minima = int(taxa_amostragem * 0.01)  # 10ms como duração mínima de um pulso
+
+    # Encontrar regiões conectadas
+    from scipy import ndimage
+    estrutura = np.ones(3)  # Conectividade
+    rotulado, num_recursos = ndimage.label(sinal_binario, structure=estrutura)
+
+    # Remover regiões pequenas demais (ruído)
+    for i in range(1, num_recursos + 1):
+        tamanho = np.sum(rotulado == i)
+        if tamanho < duracao_minima:
+            sinal_binario[rotulado == i] = 0
+
+    # 6. Encontrar transições com mais precisão
+    mudancas = np.diff(sinal_binario)
+    inicios = np.where(mudancas == 1)[0]
+    fins = np.where(mudancas == -1)[0]
+
+    # Garantir que temos pares completos de início/fim
+    if len(inicios) > 0 and len(fins) > 0:
+        if inicios[0] > fins[0]:
+            fins = fins[1:]
+        if len(inicios) > len(fins):
+            inicios = inicios[:len(fins)]
+
+    # Se não há transições suficientes, retornar uma string vazia
+    if len(inicios) == 0 or len(fins) == 0:
+        return ""
+
+    # 7. Calcular durações de sons e silêncios
+    duracoes_sons = []
+    duracoes_silencios = []
+
+    for i in range(len(inicios)):
+        duracao = (fins[i] - inicios[i]) / taxa_amostragem
+        duracoes_sons.append(duracao)
+
+    for i in range(len(inicios) - 1):
+        duracao = (inicios[i + 1] - fins[i]) / taxa_amostragem
+        duracoes_silencios.append(duracao)
+
+    # 8. Usar K-means para classificar duração de sons (pontos e traços)
+    from sklearn.cluster import KMeans
+
+    # Se temos sons suficientes para clustering
+    if len(duracoes_sons) > 3:
+        try:
+            # Tentar K-means com 2 clusters (ponto e traço)
+            kmeans_sons = KMeans(n_clusters=2, random_state=0).fit(np.array(duracoes_sons).reshape(-1, 1))
+            centros_sons = kmeans_sons.cluster_centers_.flatten()
+
+            # O centro menor é o ponto, o maior é o traço
+            if centros_sons[0] < centros_sons[1]:
+                centro_ponto, centro_traco = centros_sons
+            else:
+                centro_traco, centro_ponto = centros_sons
+
+            # Limiar entre ponto e traço (média ponderada dos centros)
+            limiar_ponto_traco = (centro_ponto * 2 + centro_traco) / 3
+        except:
+            # Se K-means falhar, usar média simples
+            limiar_ponto_traco = np.mean(duracoes_sons)
+    else:
+        # Poucos sons para clustering, usar heurística
+        limiar_ponto_traco = np.median(duracoes_sons) * 1.5
+
+    # 9. Usar K-means para classificar silêncios (entre símbolos, letras e palavras)
+    if len(duracoes_silencios) > 4:
+        try:
+            # Tentar K-means com 2 ou 3 clusters para silêncios
+            n_clusters = 3 if len(duracoes_silencios) > 10 else 2
+            kmeans_silencios = KMeans(n_clusters=n_clusters, random_state=0).fit(
+                np.array(duracoes_silencios).reshape(-1, 1))
+            centros_silencios = np.sort(kmeans_silencios.cluster_centers_.flatten())
+
+            if len(centros_silencios) >= 3:
+                # Temos 3 clusters: símbolo, letra, palavra
+                limiar_simbolo_letra = (centros_silencios[0] + centros_silencios[1]) / 2
+                limiar_letra_palavra = (centros_silencios[1] + centros_silencios[2]) / 2
+            elif len(centros_silencios) == 2:
+                # Temos 2 clusters: usamos valores proporcionais
+                limiar_simbolo_letra = centros_silencios[0] * 1.2
+                limiar_letra_palavra = centros_silencios[1] * 0.8
+            else:
+                # Fallback
+                limiar_simbolo_letra = np.median(duracoes_silencios) * 1.5
+                limiar_letra_palavra = np.median(duracoes_silencios) * 3
+        except:
+            # Se K-means falhar, usar proporções típicas de Morse
+            # Tipicamente: espaço entre símbolos = 1 unidade, entre letras = 3 unidades, entre palavras = 7 unidades
+            duracoes_ordenadas = np.sort(duracoes_silencios)
+            limiar_simbolo_letra = np.median(duracoes_ordenadas) * 2
+            limiar_letra_palavra = np.median(duracoes_ordenadas) * 5
+    else:
+        # Poucos dados para clustering
+        duracoes_ordenadas = np.sort(duracoes_silencios)
+        if len(duracoes_ordenadas) > 1:
+            # Usar proporções padrão baseadas na mediana
+            limiar_simbolo_letra = np.median(duracoes_ordenadas) * 2
+            limiar_letra_palavra = np.median(duracoes_ordenadas) * 5
+        else:
+            # Valores arbitrários baseados em durações típicas
+            menor_som = min(duracoes_sons) if duracoes_sons else 0.05
+            limiar_simbolo_letra = menor_som * 3
+            limiar_letra_palavra = menor_som * 7
+
+    # 10. Construir o código Morse
+    codigo_morse = []
+    simbolo_atual = []
+
+    # Converter durações em símbolos Morse
+    for i, duracao in enumerate(duracoes_sons):
+        if duracao < limiar_ponto_traco:
+            simbolo_atual.append('.')
+        else:
+            simbolo_atual.append('-')
+
+        # Verificar se é o último símbolo ou se há um próximo silêncio
+        if i < len(duracoes_silencios):
+            duracao_silencio = duracoes_silencios[i]
+
+            if duracao_silencio >= limiar_letra_palavra:
+                # Fim de palavra
+                codigo_morse.append(''.join(simbolo_atual))
+                codigo_morse.append('   ')  # Espaço entre palavras
+                simbolo_atual = []
+            elif duracao_silencio >= limiar_simbolo_letra:
+                # Fim de letra
+                codigo_morse.append(''.join(simbolo_atual))
+                codigo_morse.append(' ')  # Espaço entre letras
+                simbolo_atual = []
+        elif i == len(duracoes_sons) - 1 and simbolo_atual:
+            # Último símbolo
+            codigo_morse.append(''.join(simbolo_atual))
+
+    return ''.join(codigo_morse).strip()
+
+# Adicione este trecho após o botão "Abrir Arquivo" na seção de entrada Morse
+btn_abrir_audio = tk.Button(frame_entrada_morse, text="Abrir Áudio",
+                            command=lambda: carregar_audio_morse())
+btn_abrir_audio.grid(row=1, column=0, sticky="w", padx=5, pady=2)
+
+# Função para exportar áudio Morse
+def exportar_audio_morse():
+    """Exporta o código Morse atual como um arquivo de áudio WAV"""
+    global reproduzindo
+
+    # Verificar se há código Morse para exportar
+    morse_code = saida_morse.get("1.0", tk.END).strip()
+
+    # Se não houver código Morse, tentar converter da entrada
+    if not morse_code:
+        converter_para_morse()
+        morse_code = saida_morse.get("1.0", tk.END).strip()
+
+    if not morse_code:
+        messagebox.showwarning("Aviso", "Nenhum código Morse para exportar.")
+        return
+
+    # Solicitar ao usuário onde salvar o arquivo
+    arquivo = filedialog.asksaveasfilename(
+        title="Exportar Áudio",
+        defaultextension=".wav",
+        filetypes=(("Arquivo WAV", "*.wav"), ("Todos os Arquivos", "*.*"))
+    )
+
+    if not arquivo:
+        return
+
+    # Obter configurações de som
+    wpm = wpm_var.get()
+    frequencia = freq_var.get()
+    volume = volume_var.get()
+
+    # Calcular durações com base no WPM
+    dot_duration = 1.2 / wpm  # em segundos
+    dash_duration = dot_duration * 3
+    symbol_space = dot_duration  # Espaço entre símbolos
+    letter_space = dot_duration * 3  # Espaço entre letras
+    word_space = dot_duration * 7  # Espaço entre palavras
+
+    # Taxa de amostragem para o arquivo de áudio (44.1 kHz é padrão para qualidade CD)
+    taxa_amostragem = 44100
+
+    # Gerar o sinal de áudio
+    try:
+        # Mostrar indicador de processamento
+        saida_morse.insert(tk.END, "\n\nGerando áudio, por favor aguarde...")
+        saida_morse.update()
+
+        # Criar os dados de áudio
+        dados_audio = gerar_dados_audio_morse(morse_code, taxa_amostragem,
+                                              dot_duration, dash_duration,
+                                              symbol_space, letter_space, word_space,
+                                              frequencia, volume)
+
+        # Normalizar para evitar clipping
+        if np.max(np.abs(dados_audio)) > 0:
+            dados_audio = dados_audio / np.max(np.abs(dados_audio)) * 0.9
+
+        # Converter para o formato de 16 bits
+        dados_audio_16bit = (dados_audio * 32767).astype(np.int16)
+
+        # Salvar o arquivo
+        wavfile.write(arquivo, taxa_amostragem, dados_audio_16bit)
+
+        # Remover indicador de processamento e mostrar mensagem de sucesso
+        saida_morse.delete("1.0", tk.END)
+        saida_morse.insert("1.0", morse_code)
+        messagebox.showinfo("Sucesso", f"Áudio exportado com sucesso: {arquivo}")
+
+    except Exception as e:
+        messagebox.showerror("Erro", f"Erro ao exportar o áudio: {e}")
+        # Remover indicador de processamento
+        saida_morse.delete("1.0", tk.END)
+        saida_morse.insert("1.0", morse_code)
+
+def gerar_dados_audio_morse(morse_code, taxa_amostragem, dot_duration, dash_duration,
+                            symbol_space, letter_space, word_space, frequencia, volume):
+    """Gera os dados de áudio para o código Morse fornecido"""
+
+    # Função para gerar um tom senoidal
+    def gerar_tom(duracao, freq, vol):
+        t = np.linspace(0, duracao, int(taxa_amostragem * duracao), endpoint=False)
+        # Adicionar envelope ADSR simples para suavizar o início e fim do som
+        envelope = np.ones_like(t)
+        attack = int(0.005 * taxa_amostragem)  # 5ms de ataque
+        release = int(0.005 * taxa_amostragem)  # 5ms de release
+
+        # Aplicar ataque (rampa linear)
+        if len(envelope) > attack:
+            envelope[:attack] = np.linspace(0, 1, attack)
+
+        # Aplicar release (rampa linear descendente)
+        if len(envelope) > release:
+            envelope[-release:] = np.linspace(1, 0, release)
+
+        return vol * np.sin(2 * np.pi * freq * t) * envelope
+
+    # Função para gerar silêncio
+    def gerar_silencio(duracao):
+        return np.zeros(int(taxa_amostragem * duracao))
+
+    # Processar o código Morse
+    dados_audio = np.array([])
+
+    sep_letras = entrada_sep_letras.get() or " "
+    sep_palavras = entrada_sep_palavras.get() or "   "
+
+    for palavra in morse_code.split(sep_palavras):
+        for i, letra in enumerate(palavra.split(sep_letras)):
+            for j, simbolo in enumerate(letra):
+                if simbolo == '.':
+                    dados_audio = np.append(dados_audio, gerar_tom(dot_duration, frequencia, volume))
+                elif simbolo == '-':
+                    dados_audio = np.append(dados_audio, gerar_tom(dash_duration, frequencia, volume))
+
+                # Espaço entre símbolos dentro da letra
+                if j < len(letra) - 1:
+                    dados_audio = np.append(dados_audio, gerar_silencio(symbol_space))
+
+            # Espaço entre letras
+            if i < len(palavra.split(sep_letras)) - 1:
+                dados_audio = np.append(dados_audio, gerar_silencio(letter_space))
+
+        # Espaço entre palavras
+        dados_audio = np.append(dados_audio, gerar_silencio(word_space))
+
+    return dados_audio
+
+# Adicionar botão Exportar na interface de reprodução
+btn_exportar = tk.Button(frame_reprod_morse, text="💾 Exportar",
+                         command=lambda: exportar_audio_morse(), bg="lightblue")
+btn_exportar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
+
+# Atualizar a configuração do grid para acomodar o novo botão
+frame_reprod_morse.rowconfigure(1, weight=1)
+
+def mostrar_tabela_morse():
+    """Exibe uma janela com a tabela de referência do código Morse"""
+    # Criar uma nova janela
+    janela_tabela = tk.Toplevel()
+    janela_tabela.title("Tabela de Código Morse")
+    janela_tabela.geometry("500x600")
+    janela_tabela.minsize(400, 250)
+
+    # Criar um frame para conter a tabela
+    frame_tabela = tk.Frame(janela_tabela, padx=10, pady=10)
+    frame_tabela.pack(fill="both", expand=True)
+
+    # Criar uma ScrolledText para exibir a tabela
+    texto_tabela = scrolledtext.ScrolledText(frame_tabela, wrap=tk.WORD, font=("Courier", 10))
+    texto_tabela.pack(fill="both", expand=True)
+
+    # Construir a tabela de referência
+    tabela_texto = "TABELA DE CÓDIGO MORSE\n"
+    tabela_texto += "=" * 40 + "\n\n"
+
+    # Adicionar letras
+    tabela_texto += "LETRAS:\n"
+    tabela_texto += "-" * 20 + "\n"
+    for letra in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        tabela_texto += f"{letra} : {MORSE_CODE_DICT[letra]}\n"
+
+    tabela_texto += "\nNÚMEROS:\n"
+    tabela_texto += "-" * 20 + "\n"
+    for numero in "0123456789":
+        tabela_texto += f"{numero} : {MORSE_CODE_DICT[numero]}\n"
+
+    tabela_texto += "\nSINAIS DE PONTUAÇÃO:\n"
+    tabela_texto += "-" * 20 + "\n"
+    for sinal, morse in MORSE_CODE_DICT.items():
+        if sinal not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789":
+            tabela_texto += f"{sinal} : {morse}\n"
+
+    # Adicionar informações sobre regras do código Morse
+    tabela_texto += "\nREGRAS BÁSICAS:\n"
+    tabela_texto += "-" * 20 + "\n"
+    tabela_texto += "• Um traço (-) tem duração de 3 pontos (.)\n"
+    tabela_texto += "• O espaço entre partes de uma mesma letra é igual a 1 ponto\n"
+    tabela_texto += "• O espaço entre letras é igual a 3 pontos\n"
+    tabela_texto += "• O espaço entre palavras é igual a 7 pontos\n"
+
+    # Inserir o texto na área de texto
+    texto_tabela.insert("1.0", tabela_texto)
+    texto_tabela.config(state="disabled")  # Impedir edição
+
+    # Adicionar botão para fechar a janela
+    btn_fechar = tk.Button(janela_tabela, text="Fechar", command=janela_tabela.destroy)
+    btn_fechar.pack(pady=10)
+
+# Configurar responsividade da aba
+scrollable_frame.columnconfigure(0, weight=1)
+
+# Configurar pesos das linhas para melhor organização vertical
+scrollable_frame.rowconfigure(0, weight=1)  # Entrada de texto
+scrollable_frame.rowconfigure(1, weight=0)  # Botões de operação
+scrollable_frame.rowconfigure(2, weight=0)  # Configurações adicionais
+scrollable_frame.rowconfigure(3, weight=0)  # Configurações de som
+scrollable_frame.rowconfigure(4, weight=1)  # Saída de texto
+scrollable_frame.rowconfigure(5, weight=1)  # Visualização de onda
+scrollable_frame.rowconfigure(6, weight=0)  # Tabela de referência
+
+# Função para atualizar o scrollregion do canvas quando os componentes mudam de tamanho
+def update_scrollregion(event):
+    canvas_morse.configure(scrollregion=canvas_morse.bbox("all"))
+
+scrollable_frame.bind("<Configure>", update_scrollregion)
+
+# Configurar evento de mousewheel para scroll
+def _on_mousewheel(event):
+    canvas_morse.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+canvas_morse.bind_all("<MouseWheel>", _on_mousewheel)
+
+# Inicialização - Configurar o scrollregion após todos os widgets serem adicionados
+scrollable_frame.update_idletasks()
+canvas_morse.configure(scrollregion=canvas_morse.bbox("all"))
+
 # Criar menu
 menu_principal = tk.Menu(janela)
 janela.config(menu=menu_principal)
@@ -1335,16 +2300,17 @@ menu_estatisticas.add_command(label="Limpar Dados", command=lambda: messagebox.a
 menu_ajuda = tk.Menu(menu_principal, tearoff=0)
 menu_principal.add_cascade(label="Ajuda", menu=menu_ajuda)
 menu_ajuda.add_command(label="Conteúdo da Ajuda", command=lambda: mostrar_ajuda(), accelerator="F1")
-menu_ajuda.add_command(label="Dicas Rápidas", command=lambda: mostrar_dicas(), accelerator="F2")
-menu_ajuda.add_command(label="Relatório de Bugs", command=lambda: reportar_bug(), accelerator="F3")
-menu_ajuda.add_command(label="Verificar Atualizações", command=lambda: verificar_atualizacoes(), accelerator="F4")
+menu_ajuda.add_command(label="Ver Tutorial", command=lambda: mostrar_tutorial(), accelerator="F2")
+menu_ajuda.add_command(label="Dicas Rápidas", command=lambda: mostrar_dicas(), accelerator="F3")
+menu_ajuda.add_command(label="Relatório de Bugs", command=lambda: reportar_bug(), accelerator="F4")
+menu_ajuda.add_command(label="Verificar Atualizações", command=lambda: verificar_atualizacoes(), accelerator="F5")
 menu_ajuda.add_separator()
-menu_ajuda.add_command(label="Sobre", command=lambda: mostrar_sobre(), accelerator="F5")
+menu_ajuda.add_command(label="Sobre", command=lambda: mostrar_sobre(), accelerator="F6")
 
 # Funções para os itens do menu Ajuda
 def mostrar_ajuda():
     ajuda = tk.Toplevel(janela)
-    ajuda.title("Ajuda - Sistema de Criptografia")
+    ajuda.title("Ajuda - CryptographiE")
     ajuda.geometry("600x500")
     ajuda.minsize(500, 400)
     ajuda.transient(janela)  # Define a janela principal como parent
@@ -1364,7 +2330,7 @@ def mostrar_ajuda():
     # Título principal
     titulo_frame = ttk.Frame(frame_principal, style="Ajuda.TFrame")
     titulo_frame.pack(fill=tk.X, pady=(0, 10))
-    ttk.Label(titulo_frame, text="Sistema de Criptografia - Manual de Ajuda",
+    ttk.Label(titulo_frame, text="CryptographiE - Manual de Ajuda",
               style="Titulo.TLabel").pack(side=tk.LEFT)
 
     # Criar notebook para organizar a ajuda em abas
@@ -1487,8 +2453,8 @@ def mostrar_ajuda():
     # Conteúdo para a aba de Introdução
     conteudo_intro = [
         {
-            "titulo": "Sistema de Criptografia",
-            "descricao": "Bem-vindo ao Sistema de Criptografia CONATUS Technologies, uma ferramenta projetada para proteger seus dados pessoais e arquivos importantes.",
+            "titulo": "CryptographiE",
+            "descricao": "Bem-vindo ao Sistema de Criptografia - CryptographiE da CONATUS Technologies, uma ferramenta projetada para proteger seus dados pessoais e arquivos importantes.",
         },
         {
             "titulo": "O que é criptografia?",
@@ -1565,7 +2531,7 @@ def mostrar_ajuda():
                 "Os arquivos criptografados manterá a mesma extensão e aparência, tornando-o indistínguel do arquivo original",
                 "Mantenha sempre um backup dos seus arquivos originais antes de criptografá-los.",
                 "Sempre descriptografe o seu conteúdo antes de gerar uma nova chave, uma vez que uma nova for gerada não será possível descriptografar o conteúdo anterior.",
-                "A criptografia de arquivos grandes pode levar alguns minutos."
+                "A criptografia de arquivos grandes pode levar alguns minutos e exigir mais da sua CPU."
             ]
         }
     ]
@@ -1577,7 +2543,7 @@ def mostrar_ajuda():
             "descricao": "A aba \"Estatísticas\" permite monitorar o uso do sistema e analisar padrões de criptografia.",
         },
         {
-            "titulo": "Funcionalidades",
+            "titulo": "Operações Disponíveis",
             "itens": [
                 {"titulo": "Visualização de Dados",
                  "descricao": "Veja estatísticas sobre o número de arquivos criptografados/descriptografados."},
@@ -1592,7 +2558,40 @@ def mostrar_ajuda():
             "itens": [
                 "Acompanhe o volume de dados processados pelo sistema.",
                 "Identifique picos de uso e padrões de utilização.",
-                "Mantenha um registro das suas atividades de criptografia."
+                "Mantenha um registro das suas atividades de criptografia.",
+                "Opção de exportação dos dados estatísticos"
+            ]
+        }
+    ]
+
+    # Conteúdo para a aba de Código Morse
+    conteudo_morse = [
+        {
+            "titulo": "Código Morse",
+            "descricao": "A aba \"Código Morse\" oferece ferramentas completas para tradução e interação com o código morse.",
+        },
+        {
+            "titulo": "Operações Disponíveis",
+            "itens": [
+                {"titulo": "Tradução Bidirecional",
+                 "descricao": "Converta texto para código morse e código morse para texto."},
+                {"titulo": "Reprodução de Áudio",
+                 "descricao": "Escute o código morse com controle de velocidade, volume e frequência."},
+                {"titulo": "Visualização por Onda",
+                 "descricao": "Veja a representação visual das ondas sonoras do código morse."},
+                {"titulo": "Exportação de Áudio",
+                 "descricao": "Salve o código morse como arquivo de áudio em formato .WAV ou .MP3."},
+                {"titulo": "Carregamento de Áudio",
+                 "descricao": "Importe arquivos de áudio .WAV para tradução automática de código morse."}
+            ]
+        },
+        {
+            "titulo": "Benefícios",
+            "itens": [
+                "Converta mensagens em código Morse para aumentar a privacidade da comunicação.",
+                "Traduza mensagens rapidamente entre texto e código morse.",
+                "Analise visualmente a estrutura de mensagens em código morse.",
+                "Compartilhe e traduza mensagens em morse como arquivos de áudio."
             ]
         }
     ]
@@ -1606,11 +2605,12 @@ def mostrar_ajuda():
                 "colunas": ["Atalho", "Função"],
                 "linhas": [
                     ["F1", "Abrir o Manual de Ajuda"],
-                    ["F2", "Mostrar Dicas Rápidas"],
-                    ["F3", "Reportar Bug"],
-                    ["F4", "Verificar Atualizações"],
-                    ["F5", "Mostrar Sobre"],
-                    ["F6", "Abrir Website"],
+                    ["F2", "Ver Tutorial"],
+                    ["F3", "Mostrar Dicas Rápidas"],
+                    ["F4", "Reportar Bug"],
+                    ["F5", "Verificar Atualizações"],
+                    ["F6", "Mostrar Sobre"],
+                    ["F7", "Abrir Website"],
                 ]
             }
         }
@@ -1621,6 +2621,7 @@ def mostrar_ajuda():
     criar_aba(notebook, "Criptografia de Texto", conteudo_texto)
     criar_aba(notebook, "Criptografia de Arquivos", conteudo_arquivos)
     criar_aba(notebook, "Estatísticas", conteudo_stats)
+    criar_aba(notebook, "Código Morse", conteudo_morse)
     criar_aba(notebook, "Atalhos de Teclado", conteudo_atalhos)
 
     # Botão de fechar com estilo
@@ -1629,6 +2630,492 @@ def mostrar_ajuda():
 
     botao_fechar = ttk.Button(botoes_frame, text="Fechar", command=ajuda.destroy)
     botao_fechar.pack(side=tk.RIGHT, padx=10)
+
+def mostrar_tutorial():
+    # Criar nova janela para o tutorial
+    tutorial = tk.Toplevel(janela)
+    tutorial.title("Tutorial em Vídeo - CryptographiE")
+    tutorial.geometry("900x650")
+    tutorial.minsize(800, 600)
+    tutorial.transient(janela)  # Define a janela principal como parent
+    tutorial.grab_set()  # Torna a janela modal
+    tutorial.configure(bg="#f5f7fa")  # Cor de fundo mais suave
+
+    # Configurações de estilo
+    estilo = ttk.Style()
+    estilo.configure("Tutorial.TFrame", background="#f5f7fa")
+    estilo.configure("TutorialTitle.TLabel", font=("Segoe UI", 18, "bold"), foreground="#2c3e50")
+    estilo.configure("TutorialText.TLabel", font=("Segoe UI", 11), foreground="#34495e")
+    estilo.configure("TutorialButton.TButton", font=("Segoe UI", 10))
+    estilo.configure("ControlButton.TButton", padding=5)
+
+    # Frame principal
+    frame_principal = ttk.Frame(tutorial, padding=15, style="Tutorial.TFrame")
+    frame_principal.pack(fill=tk.BOTH, expand=True)
+
+    # Título e subtítulo
+    frame_titulo = ttk.Frame(frame_principal, style="Tutorial.TFrame")
+    frame_titulo.pack(fill=tk.X, pady=(0, 15))
+
+    ttk.Label(frame_titulo, text="Tutorial do CryptographiE",
+              style="TutorialTitle.TLabel").pack(anchor=tk.W)
+    ttk.Label(frame_titulo, text="Aprenda como utilizar todas as funcionalidades do sistema",
+              style="TutorialText.TLabel").pack(anchor=tk.W, pady=(5, 0))
+
+    # Frame para o player de vídeo
+    frame_video = ttk.Frame(frame_principal, style="Tutorial.TFrame")
+    frame_video.pack(fill=tk.BOTH, expand=True, pady=10)
+
+    # Verificar se a biblioteca está disponível
+    try:
+        import cv2
+        from PIL import Image, ImageTk
+        video_disponivel = True
+    except ImportError:
+        video_disponivel = False
+
+    # Classe para gerenciar tooltips
+    class ToolTip:
+        def __init__(self, widget, text):
+            self.widget = widget
+            self.text = text
+            self.tip_window = None
+            self.widget.bind("<Enter>", self.show_tip)
+            self.widget.bind("<Leave>", self.hide_tip)
+
+        def show_tip(self, event=None):
+            """Exibe o tooltip quando o mouse passa sobre o widget"""
+            if self.tip_window or not self.text:
+                return
+
+            x, y, _, _ = self.widget.bbox("insert")
+            x += self.widget.winfo_rootx() + 25
+            y += self.widget.winfo_rooty() + 25
+
+            # Cria uma janela superior para o tooltip
+            self.tip_window = tw = tk.Toplevel(self.widget)
+            tw.wm_overrideredirect(True)  # Remove a borda da janela
+            tw.wm_geometry(f"+{x}+{y}")
+
+            # Cria um label com o texto do tooltip
+            label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                             background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                             font=("Segoe UI", 9, "normal"))
+            label.pack(padx=2, pady=2)
+
+        def hide_tip(self, event=None):
+            """Esconde o tooltip quando o mouse sai do widget"""
+            if self.tip_window:
+                self.tip_window.destroy()
+                self.tip_window = None
+
+    if video_disponivel:
+        # Lista de vídeos tutoriais disponíveis
+        videos = [
+            {"titulo": "Introdução ao Sistema", "arquivo": "video/Tutorial1.mp4"},
+            {"titulo": "Criptografar e Descriptografar Textos", "arquivo": "video/Tutorial2.mp4"},
+            {"titulo": "Criptografar e Descriptografar Arquivos", "arquivo": "video/Tutorial3.mp4"},
+            {"titulo": "Criptografar e Descriptografar Pastas", "arquivo": "video/Tutorial4.mp4"},
+            {"titulo": "Estatísticas e Exportação", "arquivo": "video/Tutorial5.mp4"},
+            {"titulo": "Código Morse", "arquivo": "video/Tutorial6.mp4"},
+            {"titulo": "Visite nosso site", "arquivo": "video/Tutorial7.mp4"}
+        ]
+
+        # Variáveis para controle de reprodução
+        reproduzindo = tk.BooleanVar(value=False)
+        volume = tk.DoubleVar(value=0.8)
+        progresso = tk.DoubleVar(value=0.0)
+
+        # Variáveis globais para o escopo da função
+        cap = None
+        duracao_total = 0
+        frame_atual = 0
+        total_frames = 0
+        video_selecionado = tk.StringVar(value=videos[0]["arquivo"])
+
+        # Frame de seleção de vídeos
+        frame_selecao = ttk.Frame(frame_principal, style="Tutorial.TFrame")
+        frame_selecao.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(frame_selecao, text="Selecione um tutorial:",
+                  style="TutorialText.TLabel").pack(side=tk.LEFT, padx=(0, 10))
+
+        combo_videos = ttk.Combobox(frame_selecao, values=[v["titulo"] for v in videos],
+                                    width=30, state="readonly")
+        combo_videos.current(0)
+        combo_videos.pack(side=tk.LEFT)
+
+        # Frame para o vídeo
+        video_canvas = tk.Canvas(frame_video, bg="#000000", highlightthickness=0)
+        video_canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Frame para informações do vídeo
+        info_frame = ttk.Frame(frame_principal, style="Tutorial.TFrame")
+        info_frame.pack(fill=tk.X, pady=(10, 5))
+
+        tempo_label = ttk.Label(info_frame, text="00:00 / 00:00",
+                                style="TutorialText.TLabel", width=15)
+        tempo_label.pack(side=tk.LEFT)
+
+        # Barra de progresso do vídeo
+        progresso_frame = ttk.Frame(frame_principal, style="Tutorial.TFrame")
+        progresso_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Função para formatar tempo
+        def formatar_tempo(segundos):
+            minutos = int(segundos // 60)
+            segs = int(segundos % 60)
+            return f"{minutos:02d}:{segs:02d}"
+
+        # Função para atualizar label de tempo
+        def atualizar_tempo_label():
+            if total_frames > 0 and cap is not None and cap.isOpened():
+                tempo_atual = (frame_atual / total_frames) * duracao_total
+                tempo_label.config(text=f"{formatar_tempo(tempo_atual)} / {formatar_tempo(duracao_total)}")
+
+        # Função para mostrar um frame no canvas
+        def mostrar_frame(frame):
+            # Converter frame para formato Tkinter
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
+
+            # Redimensionar mantendo proporção
+            canvas_width = video_canvas.winfo_width()
+            canvas_height = video_canvas.winfo_height()
+
+            if canvas_width > 0 and canvas_height > 0:
+                img_width, img_height = img.size
+                ratio = min(canvas_width / img_width, canvas_height / img_height)
+                new_width = int(img_width * ratio)
+                new_height = int(img_height * ratio)
+                img = img.resize((new_width, new_height), Image.LANCZOS)
+
+                # Calcular posição para centralizar
+                x_offset = (canvas_width - new_width) // 2
+                y_offset = (canvas_height - new_height) // 2
+
+                # Limpar canvas e mostrar imagem
+                video_canvas.delete("all")
+                imgtk = ImageTk.PhotoImage(image=img)
+                video_canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=imgtk)
+                video_canvas.image = imgtk  
+
+        # Função para atualizar progresso
+        def atualizar_progresso(event=None):
+            nonlocal frame_atual
+            if cap is not None and cap.isOpened() and total_frames > 0:
+                novo_frame = int(progresso.get() * total_frames)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, novo_frame)
+                frame_atual = novo_frame
+                atualizar_tempo_label()
+
+                # Atualizar a exibição do frame atual
+                ret, frame = cap.read()
+                if ret:
+                    mostrar_frame(frame)
+                    # Voltar para o frame atual para manter a posição
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_atual)
+
+        progresso_barra = ttk.Scale(progresso_frame, from_=0.0, to=1.0,
+                                    variable=progresso, orient=tk.HORIZONTAL,
+                                    command=lambda x: atualizar_progresso())
+        progresso_barra.pack(fill=tk.X, pady=(0, 5))
+
+        # Botões de controle
+        controles_frame = ttk.Frame(frame_principal, style="Tutorial.TFrame")
+        controles_frame.pack(fill=tk.X, pady=(0, 10))
+
+        # Frame para botões de controle
+        botoes_frame = ttk.Frame(controles_frame, style="Tutorial.TFrame")
+        botoes_frame.pack(side=tk.LEFT)
+
+        # Função para adicionar tooltip a um botão
+        def adicionar_tooltip(widget, texto):
+            tooltip = ToolTip(widget, texto)
+            return tooltip
+
+        # Função para abrir vídeo
+        def abrir_video():
+            nonlocal cap, total_frames, duracao_total, frame_atual
+
+            # Fechar vídeo anterior se estiver aberto
+            if cap is not None and cap.isOpened():
+                cap.release()
+
+            arquivo_video = video_selecionado.get()
+            # Abrir novo vídeo
+            cap = cv2.VideoCapture(arquivo_video)
+
+            if not cap.isOpened():
+                messagebox.showerror("Erro", f"Não foi possível abrir o vídeo: {arquivo_video}")
+                return
+
+            # Obter informações do vídeo
+            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            duracao_total = total_frames / fps if fps > 0 else 0
+            frame_atual = 0
+
+            # Atualizar interface
+            progresso.set(0)
+            atualizar_tempo_label()
+
+            # Exibir primeiro frame
+            ret, frame = cap.read()
+            if ret:
+                mostrar_frame(frame)
+
+        # Função para iniciar/pausar o vídeo
+        def toggle_play():
+            if reproduzindo.get():
+                reproduzindo.set(False)
+                btn_play.config(text="▶")
+            else:
+                reproduzindo.set(True)
+                btn_play.config(text="⏸")
+                reproduzir_video()
+
+        # Função para reproduzir o vídeo
+        def reproduzir_video():
+            nonlocal frame_atual
+
+            if cap is None or not cap.isOpened():
+                return
+
+            def update_frame():
+                nonlocal frame_atual
+
+                if not reproduzindo.get():
+                    return
+
+                if cap is None or not cap.isOpened():
+                    return
+
+                ret, frame = cap.read()
+                if ret:
+                    # Mostrar frame
+                    mostrar_frame(frame)
+
+                    # Atualizar progresso
+                    frame_atual += 1
+                    if total_frames > 0:
+                        progresso.set(frame_atual / total_frames)
+
+                    # Atualizar tempo
+                    atualizar_tempo_label()
+
+                    # Agendar próximo frame
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    delay = int(1000 / fps) if fps > 0 else 33  # ~30fps padrão
+                    tutorial.after(delay, update_frame)
+                else:
+                    # Reiniciar o vídeo ao terminar
+                    frame_atual = 0
+                    progresso.set(0)
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    reproduzindo.set(False)
+                    btn_play.config(text="▶")
+
+                    # Mostrar primeiro frame novamente
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read()
+                    if ret:
+                        mostrar_frame(frame)
+
+            update_frame()
+
+        # Funções para controle de vídeo
+        def voltar_10_segundos():
+            nonlocal frame_atual
+            if cap is not None and cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frames_a_voltar = int(fps * 10)
+                novo_frame = max(0, frame_atual - frames_a_voltar)
+
+                cap.set(cv2.CAP_PROP_POS_FRAMES, novo_frame)
+                frame_atual = novo_frame
+                progresso.set(frame_atual / total_frames if total_frames > 0 else 0)
+
+                # Atualizar a exibição
+                ret, frame = cap.read()
+                if ret:
+                    mostrar_frame(frame)
+                    # Voltar para manter o frame atual
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_atual)
+
+                atualizar_tempo_label()
+
+        def avancar_10_segundos():
+            nonlocal frame_atual
+            if cap is not None and cap.isOpened():
+                fps = cap.get(cv2.CAP_PROP_FPS)
+                frames_a_avancar = int(fps * 10)
+                novo_frame = min(total_frames - 1, frame_atual + frames_a_avancar)
+
+                cap.set(cv2.CAP_PROP_POS_FRAMES, novo_frame)
+                frame_atual = novo_frame
+                progresso.set(frame_atual / total_frames if total_frames > 0 else 0)
+
+                # Atualizar a exibição
+                ret, frame = cap.read()
+                if ret:
+                    mostrar_frame(frame)
+                    # Voltar para manter o frame atual
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_atual)
+
+                atualizar_tempo_label()
+
+        def reiniciar_video():
+            nonlocal frame_atual
+            if cap is not None and cap.isOpened():
+                reproduzindo.set(False)
+                frame_atual = 0
+                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                progresso.set(0)
+                btn_play.config(text="▶")
+
+                # Atualizar a exibição
+                ret, frame = cap.read()
+                if ret:
+                    mostrar_frame(frame)
+
+                atualizar_tempo_label()
+
+        # Função para mudar de vídeo
+        def mudar_video(event=None):
+            idx = combo_videos.current()
+            video_selecionado.set(videos[idx]["arquivo"])
+            abrir_video()
+            if reproduzindo.get():
+                reproduzir_video()
+
+        combo_videos.bind("<<ComboboxSelected>>", mudar_video)
+
+        # Botões de controle
+        btn_back10 = ttk.Button(botoes_frame, text="⏪", style="ControlButton.TButton", width=3,
+                                command=voltar_10_segundos)
+        btn_back10.pack(side=tk.LEFT, padx=2)
+        adicionar_tooltip(btn_back10, "Voltar 10 segundos")
+
+        btn_play = ttk.Button(botoes_frame, text="▶", style="ControlButton.TButton", width=3,
+                              command=toggle_play)
+        btn_play.pack(side=tk.LEFT, padx=2)
+        adicionar_tooltip(btn_play, "Reproduzir")
+
+        btn_forward10 = ttk.Button(botoes_frame, text="⏩", style="ControlButton.TButton", width=3,
+                                   command=avancar_10_segundos)
+        btn_forward10.pack(side=tk.LEFT, padx=2)
+        adicionar_tooltip(btn_forward10, "Avançar 10 segundos")
+
+        btn_restart = ttk.Button(botoes_frame, text="⟲", style="ControlButton.TButton", width=3,
+                                 command=reiniciar_video)
+        btn_restart.pack(side=tk.LEFT, padx=2)
+        adicionar_tooltip(btn_restart, "Reiniciar")
+
+        # Controle de volume
+        volume_frame = ttk.Frame(controles_frame, style="Tutorial.TFrame")
+        volume_frame.pack(side=tk.RIGHT)
+
+        volume_icon = ttk.Label(volume_frame, text="🔊", style="TutorialText.TLabel")
+        volume_icon.pack(side=tk.LEFT, padx=(0, 5))
+
+        volume_slider = ttk.Scale(volume_frame, from_=0.0, to=1.0, variable=volume,
+                                  orient=tk.HORIZONTAL, length=100)
+        volume_slider.pack(side=tk.LEFT)
+
+        # Adaptar quando a janela for redimensionada
+        def on_resize(event):
+            if cap is not None and cap.isOpened():
+                # Salvar frame atual
+                atual = frame_atual
+                # Obter um frame para redimensionar
+                cap.set(cv2.CAP_PROP_POS_FRAMES, atual)
+                ret, frame = cap.read()
+                if ret:
+                    mostrar_frame(frame)
+                    # Voltar ao frame atual
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, atual)
+
+        video_canvas.bind("<Configure>", on_resize)
+
+        # Inicializar o vídeo após a janela ser criada
+        tutorial.update()
+        abrir_video()
+
+        # Garantir que o vídeo seja fechado quando a janela for fechada
+        def on_close():
+            nonlocal cap
+            if cap is not None and cap.isOpened():
+                cap.release()
+            tutorial.destroy()
+
+        tutorial.protocol("WM_DELETE_WINDOW", on_close)
+
+    else:
+        # Mensagem mais amigável se as bibliotecas não estiverem disponíveis
+        msg_frame = ttk.Frame(frame_video, style="Tutorial.TFrame")
+        msg_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Label(msg_frame, text="Não foi possível carregar o player de vídeo.",
+                  font=("Segoe UI", 14, "bold"), foreground="#e74c3c").pack(pady=(50, 20))
+
+        ttk.Label(msg_frame, text="Para assistir aos tutoriais, siga os passos abaixo:",
+                  style="TutorialText.TLabel").pack(pady=(0, 10))
+
+        # Instruções de instalação
+        frame_instrucoes = ttk.Frame(msg_frame, style="Tutorial.TFrame")
+        frame_instrucoes.pack(pady=10)
+
+        ttk.Label(frame_instrucoes, text="1. Instale as bibliotecas necessárias usando pip:",
+                  style="TutorialText.TLabel", justify=tk.LEFT).pack(anchor=tk.W)
+
+        cmd_frame = ttk.Frame(frame_instrucoes, padding=10)
+        cmd_frame.pack(fill=tk.X, pady=5)
+        cmd_frame.configure(style="Tutorial.TFrame")
+
+        cmd_text = tk.Text(cmd_frame, height=2, font=("Consolas", 10), bg="#f0f0f0",
+                           fg="#333333", relief=tk.FLAT, padx=10, pady=10)
+        cmd_text.pack(fill=tk.X)
+        cmd_text.insert(tk.END, "pip install opencv-python pillow")
+        cmd_text.config(state=tk.DISABLED)
+
+        ttk.Label(frame_instrucoes, text="2. Reinicie o programa após a instalação",
+                  style="TutorialText.TLabel", justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
+
+        ttk.Label(frame_instrucoes, text="3. Se o problema persistir, acesse o suporte técnico",
+                  style="TutorialText.TLabel", justify=tk.LEFT).pack(anchor=tk.W, pady=(10, 0))
+
+        # Botão para copiar comando
+        def copiar_comando():
+            tutorial.clipboard_clear()
+            tutorial.clipboard_append("pip install opencv-python pillow")
+            btn_copiar.config(text="✓ Copiado!")
+            tutorial.after(2000, lambda: btn_copiar.config(text="Copiar Comando"))
+
+        btn_copiar = ttk.Button(frame_instrucoes, text="Copiar Comando", command=copiar_comando)
+        btn_copiar.pack(anchor=tk.W, pady=10)
+
+    # Frame inferior com botões de ação
+    frame_acoes = ttk.Frame(frame_principal, style="Tutorial.TFrame")
+    frame_acoes.pack(fill=tk.X, pady=(10, 0))
+
+    # Botão para documentação em PDF
+    def abrir_documentacao():
+        import webbrowser
+        import os
+        pdf_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "docs.pdf")
+        if os.path.exists(pdf_path):
+            webbrowser.open('file://' + pdf_path)
+        else:
+            messagebox.showinfo("Documentação", "O arquivo de documentação não foi encontrado.")
+
+    btn_documentacao = ttk.Button(frame_acoes, text="📄 Documentação Completa",
+                                  command=abrir_documentacao)
+    btn_documentacao.pack(side=tk.LEFT, padx=(0, 10))
+
+    # Botão para fechar
+    botao_fechar = ttk.Button(frame_acoes, text="Fechar Tutorial", command=tutorial.destroy)
+    botao_fechar.pack(side=tk.RIGHT)
 
 def mostrar_dicas():
     dicas = tk.Toplevel(janela)
@@ -1684,12 +3171,16 @@ def mostrar_dicas():
         ("Segurança", "As chaves ficam armazenadas na memória do programa até que uma nova seja gerada."),
         ("Importante", "Os arquivos criptografados só podem ser abertos com a mesma chave usada para criptografá-los."),
         ("Importante", "O programa deve ser utilizado individualmente. Uma única pessoa deve ser responsável pela manutenção dos arquivos."),
+        ("Importante", "Quanto maior o tamanho do arquivo e/ou pasta, maior é o uso da capacidade do computador."),
         ("Prática", "Para melhor segurança, gere uma nova chave a cada três meses."),
         ("Prática", "Crie uma rotina regular de backup e criptografia para seus dados importantes."),
+        ("Prática", "Utilize as funcionalidades do Código Morse para comunicar-se em aúdio com privacidade."),
         ("Eficiência", "Use a função 'Criptografar Pasta' para processar múltiplos arquivos de uma vez."),
         ("Eficiência", "Organize arquivos em pastas por categoria antes de criptografá-los em lote."),
         ("Eficiência", "Confira os atalhos de Tecla."),
+        ("Análise", "Acompanhe os seus movimentos de criptografia pelo histórico."),
         ("Análise", "Confira as estatísticas para acompanhar o uso do sistema e identificar padrões."),
+        ("Análise", "Exporte os dados estatísticos de criptografia para seu relatório."),
     ]
 
     # Cores para os diferentes tipos de dicas
@@ -1727,52 +3218,205 @@ def mostrar_dicas():
     ttk.Button(frame_botoes, text="Fechar",
                command=dicas.destroy).pack(side=tk.RIGHT, padx=10)
 
-    # Vincular a tecla ESC para fechar a janela
     dicas.bind("<Escape>", lambda event: dicas.destroy())
 
-def reportar_bug():
-    bug = tk.Toplevel(janela)
-    bug.title("Reportar um problema")
-    bug.geometry("500x500")
-    bug.transient(janela)
-    bug.grab_set()
+def enviar_email_relatorio(titulo, descricao, passos, incluir_logs, email_usuario=None):
+    # Configurações de email 
+    remetente = "seu_email@gmail.com" 
+    destinatario = "conatustechlogies@gmail.com"  
+    senha = "xxxxxxxxxx"  
 
-    # Frame principal
-    frame_principal = ttk.Frame(bug, padding=15)
-    frame_principal.pack(fill=tk.BOTH, expand=True)
+    # Criando a mensagem
+    msg = MIMEMultipart()
+    msg['From'] = email_usuario if email_usuario else remetente
+    msg['To'] = destinatario
+    msg['Subject'] = f"Relatório de Bug: {titulo}"
 
-    # Título
-    ttk.Label(frame_principal, text="Reportar um Problema",
-              font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 15))
+    # Corpo do email
+    corpo = f"""
+    Relatório de Bug:
 
-    # Formulário
-    ttk.Label(frame_principal, text="Título do problema:").pack(anchor="w", pady=(10, 5))
-    titulo_bug = ttk.Entry(frame_principal, width=50)
-    titulo_bug.pack(fill=tk.X, pady=(0, 10))
+    Título: {titulo}
 
-    ttk.Label(frame_principal, text="Descrição detalhada:").pack(anchor="w", pady=(5, 5))
-    descricao_bug = scrolledtext.ScrolledText(frame_principal, height=8, wrap=tk.WORD)
-    descricao_bug.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+    Descrição:
+    {descricao}
 
-    ttk.Label(frame_principal, text="Passos para reproduzir:").pack(anchor="w", pady=(5, 5))
-    passos_bug = scrolledtext.ScrolledText(frame_principal, height=5, wrap=tk.WORD)
-    passos_bug.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+    Passos para Reproduzir:
+    {passos}
 
-    # Frame para os botões
-    frame_botoes = ttk.Frame(frame_principal)
+    Enviado por: {email_usuario if email_usuario else "Usuário não identificado"}
+    Logs incluídos: {'Sim' if incluir_logs else 'Não'}
+    """
+
+    # Se incluir_logs for True, poderia adicionar os logs aqui
+    if incluir_logs:
+        try:
+            corpo += "\n\nLogs do sistema:\n"
+        except Exception as e:
+            corpo += f"\n\nErro ao obter logs: {str(e)}"
+
+    msg.attach(MIMEText(corpo, 'plain'))
+
+    try:
+        # Conectando ao servidor SMTP do Gmail
+        servidor = smtplib.SMTP('smtp.gmail.com', 587)
+        servidor.starttls()
+        servidor.login(remetente, senha)
+
+        # Enviando email
+        texto = msg.as_string()
+        servidor.sendmail(remetente, destinatario, texto)
+        servidor.quit()
+        return True
+    except Exception as e:
+        print(f"Erro ao enviar email: {str(e)}")
+        return False
+
+# Variáveis globais para armazenar informações de login
+usuario_logado = False
+email_usuario_logado = ""
+
+def verificar_login(email, senha, janela_login):
+    global usuario_logado, email_usuario_logado
+
+    if email and "@" in email and senha:  # Validação básica
+        usuario_logado = True
+        email_usuario_logado = email
+        tk.messagebox.showinfo("Login", "Login realizado com sucesso!")
+        janela_login.destroy()
+        return True
+    else:
+        tk.messagebox.showerror("Erro", "Email ou senha inválidos.")
+        return False
+
+def mostrar_janela_login(callback):
+    login = tk.Toplevel(janela)
+    login.title("Login")
+    login.geometry("400x250")
+    login.transient(janela)
+    login.grab_set()
+
+    frame_login = ttk.Frame(login, padding=15)
+    frame_login.pack(fill=tk.BOTH, expand=True)
+
+    ttk.Label(frame_login, text="Login", font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 15))
+
+    ttk.Label(frame_login, text="Email:").pack(anchor="w", pady=(10, 5))
+    email_entry = ttk.Entry(frame_login, width=40)
+    email_entry.pack(fill=tk.X, pady=(0, 10))
+
+    ttk.Label(frame_login, text="Senha:").pack(anchor="w", pady=(5, 5))
+    senha_entry = ttk.Entry(frame_login, width=40, show="*")
+    senha_entry.pack(fill=tk.X, pady=(0, 15))
+
+    frame_botoes = ttk.Frame(frame_login)
     frame_botoes.pack(fill=tk.X, pady=(10, 0))
 
-    # Checkbox para anexar logs
-    var_logs = tk.BooleanVar(value=True)
-    check_logs = ttk.Checkbutton(frame_botoes, text="Anexar logs do sistema", variable=var_logs)
-    check_logs.pack(side=tk.LEFT)
+    def processar_login():
+        email = email_entry.get()
+        senha = senha_entry.get()
+        if verificar_login(email, senha, login):
+            callback()
 
-    # Botões
-    ttk.Button(frame_botoes, text="Cancelar", command=bug.destroy).pack(side=tk.RIGHT, padx=5)
-    ttk.Button(frame_botoes, text="Enviar Relatório",
-               command=lambda: [tk.messagebox.showinfo("Relatório Enviado",
-                                                       "Obrigado! Seu relatório foi enviado com sucesso."),
-                                bug.destroy()]).pack(side=tk.RIGHT, padx=5)
+    def cancelar():
+        login.destroy()
+
+    ttk.Button(frame_botoes, text="Cancelar", command=cancelar).pack(side=tk.RIGHT, padx=5)
+    ttk.Button(frame_botoes, text="Entrar", command=processar_login).pack(side=tk.RIGHT, padx=5)
+
+    # Opção para continuar sem login
+    ttk.Separator(frame_login, orient="horizontal").pack(fill=tk.X, pady=15)
+
+    def continuar_sem_login():
+        login.destroy()
+        callback()
+
+    ttk.Button(frame_login, text="Continuar sem login",
+               command=continuar_sem_login, style="Link.TButton").pack(pady=5)
+
+def reportar_bug():
+    def abrir_formulario_bug():
+        bug = tk.Toplevel(janela)
+        bug.title("Reportar um problema")
+        bug.geometry("500x500")
+        bug.transient(janela)
+        bug.grab_set()
+
+        # Frame principal
+        frame_principal = ttk.Frame(bug, padding=15)
+        frame_principal.pack(fill=tk.BOTH, expand=True)
+
+        # Título
+        ttk.Label(frame_principal, text="Reportar um Problema",
+                  font=("Arial", 14, "bold")).pack(anchor="w", pady=(0, 15))
+
+        # Mostrar informação do usuário logado
+        if usuario_logado:
+            ttk.Label(frame_principal, text=f"Logado como: {email_usuario_logado}",
+                      font=("Arial", 10, "italic")).pack(anchor="w", pady=(0, 10))
+
+        # Formulário
+        ttk.Label(frame_principal, text="Título do problema:").pack(anchor="w", pady=(10, 5))
+        titulo_bug = ttk.Entry(frame_principal, width=50)
+        titulo_bug.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(frame_principal, text="Descrição detalhada:").pack(anchor="w", pady=(5, 5))
+        descricao_bug = scrolledtext.ScrolledText(frame_principal, height=8, wrap=tk.WORD)
+        descricao_bug.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        ttk.Label(frame_principal, text="Passos para reproduzir:").pack(anchor="w", pady=(5, 5))
+        passos_bug = scrolledtext.ScrolledText(frame_principal, height=5, wrap=tk.WORD)
+        passos_bug.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+
+        # Frame para os botões
+        frame_botoes = ttk.Frame(frame_principal)
+        frame_botoes.pack(fill=tk.X, pady=(10, 0))
+
+        # Checkbox para anexar logs
+        var_logs = tk.BooleanVar(value=True)
+        check_logs = ttk.Checkbutton(frame_botoes, text="Anexar logs do sistema", variable=var_logs)
+        check_logs.pack(side=tk.LEFT)
+
+        def processar_envio():
+            titulo = titulo_bug.get()
+            descricao = descricao_bug.get("1.0", tk.END)
+            passos = passos_bug.get("1.0", tk.END)
+            incluir_logs = var_logs.get()
+
+            # Verificar se os campos essenciais estão preenchidos
+            if not titulo.strip():
+                tk.messagebox.showerror("Erro", "Por favor, informe um título para o problema.")
+                return
+
+            if not descricao.strip():
+                tk.messagebox.showerror("Erro", "Por favor, descreva o problema.")
+                return
+
+            # Enviar email, incluindo email do usuário se estiver logado
+            email_para_envio = email_usuario_logado if usuario_logado else None
+            sucesso = enviar_email_relatorio(titulo, descricao, passos, incluir_logs, email_para_envio)
+
+            if sucesso:
+                tk.messagebox.showinfo("Relatório Enviado",
+                                       "Obrigado! Seu relatório foi enviado com sucesso.")
+                bug.destroy()
+            else:
+                tk.messagebox.showerror("Erro",
+                                        "Não foi possível enviar o email. Verifique as configurações ou tente novamente mais tarde.\n \n Caso o erro persista envie um e-mail para \n conatustechnologies@gmail.com")
+
+        # Botões
+        ttk.Button(frame_botoes, text="Cancelar", command=bug.destroy).pack(side=tk.RIGHT, padx=5)
+        ttk.Button(frame_botoes, text="Enviar Relatório", command=processar_envio).pack(side=tk.RIGHT, padx=5)
+
+    # Primeiro mostra a tela de login, depois abre o formulário
+    mostrar_janela_login(abrir_formulario_bug)
+
+# Definir um estilo de botão de link (adicione no início do programa, após inicializar ttk)
+def configurar_estilos():
+    estilo = ttk.Style()
+    estilo.configure("Link.TButton", foreground="blue", background=None, font=("Arial", 9, "underline"))
+
+    configurar_estilos()
 
 def verificar_atualizacoes():
     # Simulação de verificação de atualização
@@ -1806,7 +3450,7 @@ def verificar_atualizacoes():
             status_label.config(text="Verificando componentes do sistema...")
             atualiza.after(50, lambda: atualizar_progresso(count + 5))
         else:
-            status_label.config(text="Você já possui a versão mais recente (1.0.0)")
+            status_label.config(text="Você já possui a versão mais recente (1.1.1)")
             ttk.Button(frame, text="Fechar",
                        command=atualiza.destroy).pack(pady=20)
 
@@ -1814,7 +3458,7 @@ def verificar_atualizacoes():
 
 def mostrar_sobre():
     sobre = tk.Toplevel(janela)
-    sobre.title("Sobre o Sistema de Criptografia")
+    sobre.title("Sobre o CryptographiE")
     sobre.geometry("500x500")
     sobre.resizable(False, False)
     sobre.transient(janela)
@@ -1832,9 +3476,9 @@ def mostrar_sobre():
     info_frame = tk.Frame(header, bg="#2c3e50")
     info_frame.pack(side=tk.TOP, pady=15, fill=tk.X)
 
-    tk.Label(info_frame, text="Sistema de Criptografia",
+    tk.Label(info_frame, text="CryptographiE",
              font=("Arial", 16, "bold"), fg="white", bg="#2c3e50").pack(anchor="center")
-    tk.Label(info_frame, text="Versão 1.0.0",
+    tk.Label(info_frame, text="Versão 1.1.1",
              fg="#bdc3c7", bg="#2c3e50").pack(anchor="center")
 
     # Separador
@@ -1853,7 +3497,7 @@ def mostrar_sobre():
     tab_descricao = tk.Frame(notebook, bg="white")
     notebook.add(tab_descricao, text="Descrição")
 
-    descricao_text = """O Sistema de Criptografia é uma aplicação de segurança projetada para proteger seus dados pessoais e arquivos contra acesso não autorizado.
+    descricao_text = """O CryptographiE é uma aplicação de segurança projetada para proteger seus dados pessoais e arquivos contra acesso não autorizado.
 
 Com uma interface amigável e recursos poderosos, o sistema permite criptografar textos e arquivos usando algoritmos avançados de segurança.
 
@@ -1871,12 +3515,13 @@ Desenvolvido pensando na facilidade de uso e na máxima proteção, este softwar
 
     recursos = [
         "Criptografia AES-128 de alta segurança",
-        "Interface gráfica intuitiva e amigável",
+        "Interface gráfica prática e intuitiva",
         "Processamento em lote de múltiplos arquivos",
         "Geração de chaves seguras",
         "Estatísticas detalhadas de uso",
         "Compatibilidade com vários formatos de arquivo",
-        "Operação em modo offline para maior segurança"
+        "Operação em modo offline para maior segurança",
+        "Comunicação em aúdio através do Código Morse"
     ]
 
     for recurso in recursos:
@@ -1899,7 +3544,7 @@ Desenvolvido pensando na facilidade de uso e na máxima proteção, este softwar
     # Resto do código para a aba de créditos
     tk.Label(tab_creditos, text="Desenvolvido por:", bg="white",
              font=("Arial", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 5))
-    tk.Label(tab_creditos, text="CONATUS Technologies",
+    tk.Label(tab_creditos, text="CONATUS Technologies - conatustechnologies@gmail.com",
              bg="white", justify="left").pack(anchor="w", padx=20)
 
     # Criando links clicáveis
@@ -1912,6 +3557,19 @@ Desenvolvido pensando na facilidade de uso e na máxima proteção, este softwar
                            bg="white", fg="blue", cursor="hand2")
     github_link.pack(anchor="w", padx=20, pady=2)
     github_link.bind("<Button-1>", lambda e: abrir_link("https://github.com/Lucas-Monteiro420"))
+
+    separador = tk.Frame(tab_creditos, height=2, bg="gray")
+    separador.pack(fill="x", padx=20, pady=10)
+
+    linkedin_link = tk.Label(tab_creditos, text="LinkedIn: João Pedro Oliveira de Paula",
+                             bg="white", fg="blue", cursor="hand2")
+    linkedin_link.pack(anchor="w", padx=20, pady=2)
+    linkedin_link.bind("<Button-1>", lambda e: abrir_link("https://www.linkedin.com/in/joaopedro787/"))
+
+    github_link = tk.Label(tab_creditos, text="GitHub: JoaoPedro787",
+                           bg="white", fg="blue", cursor="hand2")
+    github_link.pack(anchor="w", padx=20, pady=2)
+    github_link.bind("<Button-1>", lambda e: abrir_link("https://github.com/JoaoPedro787"))
 
     tk.Label(tab_creditos, text="Design:", bg="white",
              font=("Arial", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 5))
@@ -1941,16 +3599,24 @@ Desenvolvido pensando na facilidade de uso e na máxima proteção, este softwar
                command=sobre.destroy).pack(side=tk.LEFT, padx=5)
 
 def abrir_website():
-    # Função para simular abertura do site
-    tk.messagebox.showinfo("Website", "Redirecionando para o website...")
+    # URL do site do seu aplicativo
+    url = "https://brisashumanas.blogspot.com/" #site provósirio 
+
+    try:
+        # Abre o URL no navegador padrão
+        webbrowser.open(url)
+    except Exception as e:
+        # Em caso de erro, exibe uma mensagem
+        messagebox.showerror("Erro", f"Não foi possível abrir o site: {e}")
 
 # Vincular teclas de atalho
 janela.bind("<F1>", lambda event: mostrar_ajuda())
-janela.bind("<F2>", lambda event: mostrar_dicas())
-janela.bind("<F3>", lambda event: reportar_bug())
-janela.bind("<F4>", lambda event: verificar_atualizacoes())
-janela.bind("<F5>", lambda event: mostrar_sobre())
-janela.bind("<F6>", lambda event: abrir_website())
+janela.bind("<F2>", lambda event: mostrar_tutorial())
+janela.bind("<F3>", lambda event: mostrar_dicas())
+janela.bind("<F4>", lambda event: reportar_bug())
+janela.bind("<F5>", lambda event: verificar_atualizacoes())
+janela.bind("<F6>", lambda event: mostrar_sobre())
+janela.bind("<F7>", lambda event: abrir_website())
 
 # Barra de status
 barra_status = tk.Label(janela, text="Pronto", bd=1, relief=tk.SUNKEN, anchor=tk.W)
