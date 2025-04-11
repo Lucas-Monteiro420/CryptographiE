@@ -1174,20 +1174,20 @@ def atualizar_graficos():
         ax2.text(0.5, 0.5, 'Sem dados', ha='center', va='center', fontsize=8)
 
     # Gráfico 3: Operações por dia - Usando espaço inferior
-    ax3 = fig.add_subplot(gs[1, :])  
+    ax3 = fig.add_subplot(gs[1, :])
 
     # Obter últimos 4 dias
     dias = list(estatisticas.operacoes_por_dia.keys())
-    dias.sort()  
+    dias.sort()
 
     if len(dias) > 4:
-        dias = dias[-4:]  
+        dias = dias[-4:]
 
     cripto_por_dia = [estatisticas.operacoes_por_dia[dia]['cripto'] for dia in dias]
     descripto_por_dia = [estatisticas.operacoes_por_dia[dia]['descripto'] for dia in dias]
 
     # Formatação das datas para o gráfico
-    dias_formatados = [dia.split('-')[2] + '/' + dia.split('-')[1] for dia in dias]  
+    dias_formatados = [dia.split('-')[2] + '/' + dia.split('-')[1] for dia in dias]
 
     # Garantir que há pelo menos um dia para plotar
     if dias:
@@ -1253,8 +1253,8 @@ def atualizar_graficos():
         height = event.height
 
         # Calcular novas dimensões para a figura, mantendo proporção mas com tamanho reduzido
-        new_width = min(width / 100, 7)  
-        new_height = min(height / 100, 4.2)  
+        new_width = min(width / 100, 7)
+        new_height = min(height / 100, 4.2)
 
         # Atualizar o tamanho da figura
         fig.set_size_inches(new_width, new_height)
@@ -1540,7 +1540,7 @@ def converter_para_morse():
     if not separador_letras:
         separador_letras = " "
     if not separador_palavras:
-        separador_palavras = "   "  
+        separador_palavras = "   "
 
     # Converter o texto para código Morse
     resultado = []
@@ -1569,7 +1569,7 @@ def converter_para_texto():
     if not sep_letras or not sep_palavras:
         # Padrão comum em código Morse: espaço entre símbolos, 3 espaços entre palavras
         sep_letras = " "
-        sep_palavras = "   "  
+        sep_palavras = "   "
 
     # Tentar processar o código Morse
     resultado = []
@@ -1578,7 +1578,7 @@ def converter_para_texto():
         for simbolo in palavra.split(sep_letras):
             if simbolo in MORSE_CODE_REVERSE:
                 palavra_texto.append(MORSE_CODE_REVERSE[simbolo])
-            elif simbolo:  
+            elif simbolo:
                 palavra_texto.append("?")
         resultado.append("".join(palavra_texto))
 
@@ -2667,12 +2667,18 @@ def mostrar_tutorial():
     frame_video.pack(fill=tk.BOTH, expand=True, pady=10)
 
     # Verificar se a biblioteca está disponível
+    video_disponivel = False  # Inicialmente assumimos que não está disponível
     try:
         import cv2
         from PIL import Image, ImageTk
-        video_disponivel = True
-    except ImportError:
+        # Verificar se podemos realmente usar o OpenCV tentando criar um objeto VideoCapture
+        test_cap = cv2.VideoCapture()
+        if test_cap is not None:
+            test_cap.release()
+            video_disponivel = True
+    except (ImportError, AttributeError, cv2.error):
         video_disponivel = False
+        print("Bibliotecas de vídeo não disponíveis ou não funcionando corretamente")
 
     # Classe para gerenciar tooltips
     class ToolTip:
@@ -2712,13 +2718,13 @@ def mostrar_tutorial():
     if video_disponivel:
         # Lista de vídeos tutoriais disponíveis
         videos = [
-            {"titulo": "Introdução ao Sistema", "arquivo": "video/Tutorial1.mp4"},
-            {"titulo": "Criptografar e Descriptografar Textos", "arquivo": "video/Tutorial2.mp4"},
-            {"titulo": "Criptografar e Descriptografar Arquivos", "arquivo": "video/Tutorial3.mp4"},
-            {"titulo": "Criptografar e Descriptografar Pastas", "arquivo": "video/Tutorial4.mp4"},
-            {"titulo": "Estatísticas e Exportação", "arquivo": "video/Tutorial5.mp4"},
-            {"titulo": "Código Morse", "arquivo": "video/Tutorial6.mp4"},
-            {"titulo": "Visite nosso site", "arquivo": "video/Tutorial7.mp4"}
+            {"titulo": "Introdução ao Sistema", "arquivo": "video/surtando.mp4"},
+            {"titulo": "Criptografar e Descriptografar Textos", "arquivo": "video/gatonabrisa.mp4"},
+            {"titulo": "Criptografar e Descriptografar Arquivos", "arquivo": "video/gatos.mp4"},
+            {"titulo": "Criptografar e Descriptografar Pastas", "arquivo": "video/gatobranco.mp4"},
+            {"titulo": "Estatísticas e Exportação", "arquivo": "video/gatosdormindo.mp4"},
+            {"titulo": "Código Morse", "arquivo": "video/gatopreto.mp4"},
+            {"titulo": "Visite nosso site", "arquivo": "video/gatodeitado.mp4"}
         ]
 
         # Variáveis para controle de reprodução
@@ -2798,7 +2804,7 @@ def mostrar_tutorial():
                 video_canvas.delete("all")
                 imgtk = ImageTk.PhotoImage(image=img)
                 video_canvas.create_image(x_offset, y_offset, anchor=tk.NW, image=imgtk)
-                video_canvas.image = imgtk  
+                video_canvas.image = imgtk
 
         # Função para atualizar progresso
         def atualizar_progresso(event=None):
@@ -2843,6 +2849,12 @@ def mostrar_tutorial():
                 cap.release()
 
             arquivo_video = video_selecionado.get()
+            # Verificar se o arquivo existe
+            import os
+            if not os.path.exists(arquivo_video):
+                messagebox.showerror("Erro", f"O arquivo de vídeo não foi encontrado: {arquivo_video}")
+                return
+
             # Abrir novo vídeo
             cap = cv2.VideoCapture(arquivo_video)
 
@@ -3052,7 +3064,7 @@ def mostrar_tutorial():
         tutorial.protocol("WM_DELETE_WINDOW", on_close)
 
     else:
-        # Mensagem mais amigável se as bibliotecas não estiverem disponíveis
+        # Mensagem de erro e instruções quando as bibliotecas não estão disponíveis
         msg_frame = ttk.Frame(frame_video, style="Tutorial.TFrame")
         msg_frame.pack(fill=tk.BOTH, expand=True)
 
@@ -3221,10 +3233,10 @@ def mostrar_dicas():
     dicas.bind("<Escape>", lambda event: dicas.destroy())
 
 def enviar_email_relatorio(titulo, descricao, passos, incluir_logs, email_usuario=None):
-    # Configurações de email 
-    remetente = "seu_email@gmail.com" 
-    destinatario = "conatustechlogies@gmail.com"  
-    senha = "xxxxxxxxxx"  
+    # Configurações de email
+    remetente = "seu_email@gmail.com"
+    destinatario = "conatustechlogies@gmail.com"
+    senha = "xxxxxxxxxx"
 
     # Criando a mensagem
     msg = MIMEMultipart()
@@ -3561,15 +3573,6 @@ Desenvolvido pensando na facilidade de uso e na máxima proteção, este softwar
     separador = tk.Frame(tab_creditos, height=2, bg="gray")
     separador.pack(fill="x", padx=20, pady=10)
 
-    linkedin_link = tk.Label(tab_creditos, text="LinkedIn: João Pedro Oliveira de Paula",
-                             bg="white", fg="blue", cursor="hand2")
-    linkedin_link.pack(anchor="w", padx=20, pady=2)
-    linkedin_link.bind("<Button-1>", lambda e: abrir_link("https://www.linkedin.com/in/joaopedro787/"))
-
-    github_link = tk.Label(tab_creditos, text="GitHub: JoaoPedro787",
-                           bg="white", fg="blue", cursor="hand2")
-    github_link.pack(anchor="w", padx=20, pady=2)
-    github_link.bind("<Button-1>", lambda e: abrir_link("https://github.com/JoaoPedro787"))
 
     tk.Label(tab_creditos, text="Design:", bg="white",
              font=("Arial", 10, "bold")).pack(anchor="w", padx=10, pady=(10, 5))
@@ -3600,7 +3603,7 @@ Desenvolvido pensando na facilidade de uso e na máxima proteção, este softwar
 
 def abrir_website():
     # URL do site do seu aplicativo
-    url = "https://brisashumanas.blogspot.com/" #site provósirio 
+    url = "https://brisashumanas.blogspot.com/" #site provósirio
 
     try:
         # Abre o URL no navegador padrão
