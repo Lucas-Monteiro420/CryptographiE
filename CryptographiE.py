@@ -17,6 +17,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from scipy import signal
 from scipy.io import wavfile
+import serial
+import serial.tools.list_ports
 
 
 # Gera uma chave e salva em um arquivo (execute uma única vez)
@@ -1529,6 +1531,13 @@ btn_mostrar_tabela.pack(fill="x", padx=5, pady=5)
 reproduzindo = False
 thread_reproducao = None
 
+# Variáveis globais para controle do Arduino
+arduino_serial = None
+arduino_conectado = False
+arduino_porta = None
+thread_arduino = None
+transmitindo_arduino = False
+
 # Funções para operações com código Morse
 def converter_para_morse():
     """Converte texto normal para código Morse"""
@@ -2180,6 +2189,399 @@ btn_exportar.grid(row=1, column=0, columnspan=2, sticky="ew", padx=2, pady=2)
 # Atualizar a configuração do grid para acomodar o novo botão
 frame_reprod_morse.rowconfigure(1, weight=1)
 
+# Função para listar portas seriais disponíveis
+def listar_portas_seriais():
+    """Lista todas as portas seriais disponíveis no sistema com informações detalhadas"""
+    portas = list(serial.tools.list_ports.comports())
+
+    # Exibir informações detalhadas no console para debug
+    print("=== Portas disponíveis ===")
+    for p in portas:
+        print(f"Dispositivo: {p.device}")
+        print(f"Nome: {p.name}")
+        print(f"Descrição: {p.description}")
+        print(f"HWID: {p.hwid}")
+        print(f"VID:PID: {p.vid}:{p.pid}" if hasattr(p, 'vid') and hasattr(p, 'pid') else "VID:PID: N/A")
+        print("------------------------")
+
+    return portas
+
+# Função para conectar ao Arduino
+def conectar_arduino():
+    """Conecta ao Arduino na porta selecionada"""
+    global arduino_serial, arduino_conectado, arduino_porta
+
+    porta_completa = combo_portas.get()
+
+    if not porta_completa:
+        messagebox.showerror("Erro", "Selecione uma porta serial para conectar.")
+        return False
+
+    # Extrair apenas o nome da porta (COM3) da string completa
+    if "COM" in porta_completa:
+        porta = porta_completa.split(' ')[0]  # Pega apenas a primeira parte (COM3)
+    else:
+        # Tenta pegar a porta completa como está
+        porta = porta_completa
+
+    print(f"Tentando conectar na porta: '{porta}'")  # Debug
+
+    try:
+        # Fechar conexão anterior se existir
+        if arduino_serial and arduino_serial.is_open:
+            arduino_serial.close()
+
+        # Abordagem mais básica para a conexão
+        arduino_serial = serial.Serial()
+        arduino_serial.port = porta
+        arduino_serial.baudrate = 9600
+        arduino_serial.timeout = 2
+        arduino_serial.open()
+
+        time.sleep(2)  # Aguardar inicialização do Arduino
+
+        # Testar conexão - versão com diagnóstico detalhado
+        try:
+            # Limpar buffers antes de começar
+            arduino_serial.reset_input_buffer()
+            arduino_serial.reset_output_buffer()
+
+            print("Enviando comando de teste 'T'...")
+            arduino_serial.write(b'T')  # Comando de teste
+            time.sleep(1.0)  # Dar mais tempo para resposta
+
+            # Tentar ler a resposta e mostrar o que foi recebido para diagnóstico
+            resposta_bytes = arduino_serial.read_all()
+            resposta_str = resposta_bytes.decode('utf-8', errors='ignore').strip()
+
+            print(f"Resposta recebida: '{resposta_str}' (bytes: {resposta_bytes})")
+
+            # Verificar se a resposta contém "OK" em qualquer formato
+            if "OK" in resposta_str:
+                print("Comando OK reconhecido!")
+                arduino_conectado = True
+                arduino_porta = porta
+                atualizar_status_arduino("Conectado", "green")
+                messagebox.showinfo("Sucesso", f"Arduino conectado na porta {porta}.")
+                return True
+            else:
+                print("Tentando um segundo comando...")
+                # Tentar enviar outro comando como segunda tentativa
+                arduino_serial.write(b'\n')
+                time.sleep(0.5)
+
+                # Ler qualquer resposta adicional
+                resposta_bytes = arduino_serial.read_all()
+                resposta_str = resposta_bytes.decode('utf-8', errors='ignore').strip()
+                print(f"Segunda resposta: '{resposta_str}'")
+
+                # Se houver qualquer resposta, considerar conectado
+                if len(resposta_bytes) > 0:
+                    print("Arduino respondeu! Considerando conectado.")
+                    arduino_conectado = True
+                    arduino_porta = porta
+                    atualizar_status_arduino("Conectado", "green")
+                    messagebox.showinfo("Sucesso", f"Arduino conectado na porta {porta}.")
+                    return True
+                else:
+                    print("Arduino não respondeu de forma reconhecível")
+                    arduino_serial.close()
+                    arduino_conectado = False
+                    atualizar_status_arduino("Desconectado", "red")
+                    messagebox.showerror("Erro", f"Dispositivo não respondeu como esperado. Recebido: '{resposta_str}'")
+                    return False
+
+        except Exception as e:
+            print(f"Erro no teste de conexão: {e}")
+            arduino_serial.close()
+            arduino_conectado = False
+            atualizar_status_arduino("Desconectado", "red")
+            messagebox.showerror("Erro", f"Erro ao testar comunicação com o dispositivo: {e}")
+            return False
+
+    except Exception as e:
+        if arduino_serial and arduino_serial.is_open:
+            arduino_serial.close()
+        arduino_conectado = False
+        atualizar_status_arduino("Erro", "red")
+        messagebox.showerror("Erro", f"Erro ao conectar: {e}")
+        return False
+
+# Função para desconectar do Arduino
+def desconectar_arduino():
+    """Desconecta do Arduino"""
+    global arduino_serial, arduino_conectado, transmitindo_arduino
+
+    # Parar transmissão se estiver ativa
+    if transmitindo_arduino:
+        parar_transmissao_arduino()
+
+    try:
+        if arduino_serial and arduino_serial.is_open:
+            arduino_serial.write(b'X')  # Comando para desligar LED
+            arduino_serial.close()
+
+        arduino_conectado = False
+        atualizar_status_arduino("Desconectado", "red")
+        messagebox.showinfo("Desconectado", "Arduino desconectado com sucesso.")
+
+    except Exception as e:
+        messagebox.showerror("Erro", f"Erro ao desconectar: {e}")
+
+# Função para atualizar status na interface
+def atualizar_status_arduino(status, cor):
+    """Atualiza o status do Arduino na interface"""
+    lbl_status_arduino.config(text=f"Status: {status}", fg=cor)
+
+    # Atualizar estado dos botões
+    if status == "Conectado":
+        btn_conectar_arduino.config(state=tk.DISABLED)
+        btn_desconectar_arduino.config(state=tk.NORMAL)
+        btn_atualizar_portas.config(state=tk.DISABLED)
+        btn_transmitir_arduino.config(state=tk.NORMAL)
+    else:
+        btn_conectar_arduino.config(state=tk.NORMAL)
+        btn_desconectar_arduino.config(state=tk.DISABLED)
+        btn_atualizar_portas.config(state=tk.NORMAL)
+        btn_transmitir_arduino.config(state=tk.DISABLED)
+
+    if status == "Transmitindo":
+        btn_transmitir_arduino.config(state=tk.DISABLED)
+        btn_parar_arduino.config(state=tk.NORMAL)
+    else:
+        btn_parar_arduino.config(state=tk.DISABLED)
+        if status == "Conectado":
+            btn_transmitir_arduino.config(state=tk.NORMAL)
+
+# Função para atualizar lista de portas seriais
+def atualizar_portas_seriais():
+    """Atualiza a lista de portas seriais disponíveis"""
+    portas = listar_portas_seriais()
+
+    # Limpar lista atual
+    combo_portas['values'] = []
+
+    # Preencher com portas disponíveis
+    if portas:
+        # Usar apenas o nome da porta para evitar problemas de parsing
+        portas_str = [p.device for p in portas]
+        combo_portas['values'] = portas_str
+        combo_portas.current(0)  # Selecionar primeira porta
+    else:
+        messagebox.showinfo("Informação", "Nenhuma porta serial encontrada.")
+
+# Função para formatar o código Morse corretamente
+def formatar_codigo_morse(morse_code):
+    """Formata o código Morse garantindo espaçamento correto para o Arduino"""
+    # Obter separadores configurados
+    sep_letras = entrada_sep_letras.get() or " "
+    sep_palavras = entrada_sep_palavras.get() or "   "
+
+    try:
+        # Primeiro dividir por palavras
+        palavras = morse_code.split(sep_palavras)
+        palavras_formatadas = []
+
+        # Para cada palavra, formatar letras
+        for palavra in palavras:
+            letras = palavra.split(sep_letras)
+            # Filtrar letras vazias
+            letras = [letra for letra in letras if letra.strip()]
+            # Juntar letras com espaço único entre elas (o Arduino interpretará como separação entre letras)
+            palavra_formatada = " ".join(letras)
+            palavras_formatadas.append(palavra_formatada)
+
+        # Juntar palavras com três espaços entre elas (o Arduino interpretará como separação entre palavras)
+        morse_formatado = "   ".join(palavras_formatadas)
+
+        # Log para diagnóstico
+        print(f"Morse formatado para Arduino: '{morse_formatado}'")
+
+        return morse_formatado
+    except Exception as e:
+        print(f"Erro ao formatar código Morse: {e}")
+        # Retornar o código original se houver erro
+        return morse_code
+
+# Função para transmitir código Morse pelo Arduino
+def transmitir_morse_arduino():
+    """Inicia a transmissão do código Morse pelo Arduino"""
+    global transmitindo_arduino, thread_arduino
+
+    if not arduino_conectado or not arduino_serial or not arduino_serial.is_open:
+        messagebox.showerror("Erro", "Arduino não está conectado.")
+        return
+
+    morse_code = saida_morse.get("1.0", tk.END).strip()
+
+    # Se não houver código Morse, tentar converter da entrada
+    if not morse_code:
+        converter_para_morse()
+        morse_code = saida_morse.get("1.0", tk.END).strip()
+
+    if not morse_code:
+        messagebox.showwarning("Aviso", "Nenhum código Morse para transmitir.")
+        return
+
+    # Formatar o código morse para garantir espaços corretos
+    morse_code = formatar_codigo_morse(morse_code)
+
+    # Obter configurações de tempo
+    wpm = wpm_var.get()
+
+    # Calcular durações com base no WPM (em milissegundos para o Arduino)
+    dot_duration = int((1.2 / wpm) * 1000)
+    dash_duration = dot_duration * 3
+    symbol_space = dot_duration
+    letter_space = dot_duration * 3
+    word_space = dot_duration * 7
+
+    # Enviar configurações para o Arduino
+    try:
+        # Limpar buffer antes de enviar comandos
+        arduino_serial.reset_input_buffer()
+        arduino_serial.reset_output_buffer()
+
+        # Protocolo: C,dot_duration,dash_duration,symbol_space,letter_space,word_space
+        comando = f"C,{dot_duration},{dash_duration},{symbol_space},{letter_space},{word_space}\n"
+        print(f"Enviando configuração: {comando.strip()}")
+        arduino_serial.write(comando.encode())
+        time.sleep(0.5)  # Aumentar pausa para processamento
+
+        # Limpar buffer novamente antes de enviar o código morse
+        arduino_serial.reset_input_buffer()
+
+        # Iniciar thread de transmissão
+        transmitindo_arduino = True
+        atualizar_status_arduino("Transmitindo", "orange")
+        thread_arduino = threading.Thread(target=thread_transmissao_arduino,
+                                          args=(morse_code,))
+        thread_arduino.daemon = True
+        thread_arduino.start()
+
+    except Exception as e:
+        transmitindo_arduino = False
+        atualizar_status_arduino("Conectado", "green")
+        messagebox.showerror("Erro", f"Erro ao iniciar transmissão: {e}")
+
+# Thread para transmissão do código Morse
+def thread_transmissao_arduino(morse_code):
+    """Thread para transmitir o código Morse para o Arduino"""
+    global transmitindo_arduino
+
+    try:
+        print(f"Iniciando transmissão. Código: '{morse_code}'")
+
+        # Limpar buffer antes de transmitir
+        arduino_serial.reset_input_buffer()
+
+        # Enviar o código Morse diretamente como uma única mensagem
+        comando = f"M,{morse_code}\n"
+        print(f"Enviando comando: {comando.strip()}")
+        arduino_serial.write(comando.encode())
+        arduino_serial.flush()  # Garantir que todos os dados sejam enviados
+
+        # Aguardar confirmação do Arduino (com timeout)
+        inicio = time.time()
+        resposta = ""
+        while "M OK" not in resposta and (time.time() - inicio) < 180:  # Timeout de 3 minutos
+            if arduino_serial.in_waiting:
+                try:
+                    linha = arduino_serial.readline().decode('utf-8', errors='ignore').strip()
+                    if linha:
+                        print(f"Resposta durante transmissão: {linha}")
+                        resposta = linha
+                except:
+                    pass
+            time.sleep(0.1)  # Pequena pausa para não sobrecarregar a CPU
+
+            if not transmitindo_arduino:
+                break
+
+        # Finalizar a transmissão
+        transmitindo_arduino = False
+        atualizar_status_arduino("Conectado", "green")
+        messagebox.showinfo("Concluído", "Transmissão concluída.")
+
+    except Exception as e:
+        print(f"Erro na transmissão: {e}")
+        transmitindo_arduino = False
+        atualizar_status_arduino("Conectado", "green")
+        messagebox.showerror("Erro", f"Erro durante transmissão: {e}")
+
+# Função para parar a transmissão
+def parar_transmissao_arduino():
+    """Para a transmissão do código Morse pelo Arduino"""
+    global transmitindo_arduino
+
+    if not arduino_conectado or not arduino_serial or not arduino_serial.is_open:
+        return
+
+    try:
+        # Enviar comando de parada
+        arduino_serial.write(b"S\n")  # S para Stop
+        transmitindo_arduino = False
+        atualizar_status_arduino("Conectado", "green")
+
+    except Exception as e:
+        messagebox.showerror("Erro", f"Erro ao parar transmissão: {e}")
+
+# Frame para controle do Arduino (inserir após o frame de referência)
+frame_arduino = tk.LabelFrame(scrollable_frame, text="Conexão Arduino", font=("Arial", 10))
+frame_arduino.grid(row=7, column=0, sticky="ew", pady=5, padx=5)
+frame_arduino.columnconfigure(0, weight=1)
+frame_arduino.columnconfigure(1, weight=1)
+frame_arduino.columnconfigure(2, weight=1)
+frame_arduino.columnconfigure(3, weight=1)
+
+# Seleção de porta serial
+lbl_porta = tk.Label(frame_arduino, text="Porta Serial:")
+lbl_porta.grid(row=0, column=0, padx=5, pady=5, sticky="e")
+
+combo_portas = ttk.Combobox(frame_arduino, width=25)
+combo_portas.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+# Botão para atualizar lista de portas
+btn_atualizar_portas = tk.Button(frame_arduino, text="Atualizar Portas",
+                                 command=lambda: atualizar_portas_seriais())
+btn_atualizar_portas.grid(row=0, column=2, padx=5, pady=5)
+
+# Status da conexão
+lbl_status_arduino = tk.Label(frame_arduino, text="Status: Desconectado", fg="red")
+lbl_status_arduino.grid(row=0, column=3, padx=5, pady=5)
+
+# Botões de controle do Arduino
+frame_ctrl_arduino = tk.Frame(frame_arduino)
+frame_ctrl_arduino.grid(row=1, column=0, columnspan=4, sticky="ew", padx=5, pady=5)
+frame_ctrl_arduino.columnconfigure(0, weight=1)
+frame_ctrl_arduino.columnconfigure(1, weight=1)
+frame_ctrl_arduino.columnconfigure(2, weight=1)
+frame_ctrl_arduino.columnconfigure(3, weight=1)
+
+# Botões de conexão
+btn_conectar_arduino = tk.Button(frame_ctrl_arduino, text="Conectar",
+                                 command=lambda: conectar_arduino(), bg="lightgreen")
+btn_conectar_arduino.grid(row=0, column=0, padx=2, pady=2, sticky="ew")
+
+btn_desconectar_arduino = tk.Button(frame_ctrl_arduino, text="Desconectar",
+                                    command=lambda: desconectar_arduino(), bg="lightcoral")
+btn_desconectar_arduino.grid(row=0, column=1, padx=2, pady=2, sticky="ew")
+btn_desconectar_arduino.config(state=tk.DISABLED)
+
+# Botões de transmissão
+btn_transmitir_arduino = tk.Button(frame_ctrl_arduino, text="Transmitir para Arduino",
+                                   command=lambda: transmitir_morse_arduino(), bg="lightyellow")
+btn_transmitir_arduino.grid(row=0, column=2, padx=2, pady=2, sticky="ew")
+btn_transmitir_arduino.config(state=tk.DISABLED)
+
+btn_parar_arduino = tk.Button(frame_ctrl_arduino, text="Parar Transmissão",
+                              command=lambda: parar_transmissao_arduino(), bg="lightgray")
+btn_parar_arduino.grid(row=0, column=3, padx=2, pady=2, sticky="ew")
+btn_parar_arduino.config(state=tk.DISABLED)
+
+# Inicializar a lista de portas ao carregar a aplicação
+atualizar_portas_seriais()
+
 def mostrar_tabela_morse():
     """Exibe uma janela com a tabela de referência do código Morse"""
     # Criar uma nova janela
@@ -2718,13 +3120,13 @@ def mostrar_tutorial():
     if video_disponivel:
         # Lista de vídeos tutoriais disponíveis
         videos = [
-            {"titulo": "Introdução ao Sistema", "arquivo": "video/surtando.mp4"},
-            {"titulo": "Criptografar e Descriptografar Textos", "arquivo": "video/gatonabrisa.mp4"},
-            {"titulo": "Criptografar e Descriptografar Arquivos", "arquivo": "video/gatos.mp4"},
-            {"titulo": "Criptografar e Descriptografar Pastas", "arquivo": "video/gatobranco.mp4"},
-            {"titulo": "Estatísticas e Exportação", "arquivo": "video/gatosdormindo.mp4"},
-            {"titulo": "Código Morse", "arquivo": "video/gatopreto.mp4"},
-            {"titulo": "Visite nosso site", "arquivo": "video/gatodeitado.mp4"}
+            {"titulo": "Introdução ao Sistema", "arquivo": "video/Tutorial1.mp4"},
+            {"titulo": "Criptografar e Descriptografar Textos", "arquivo": "video/Tutorial2.mp4"},
+            {"titulo": "Criptografar e Descriptografar Arquivos", "arquivo": "video/Tutorial3.mp4"},
+            {"titulo": "Criptografar e Descriptografar Pastas", "arquivo": "video/Tutorial4.mp4"},
+            {"titulo": "Estatísticas e Exportação", "arquivo": "video/Tutorial5.mp4"},
+            {"titulo": "Código Morse", "arquivo": "video/Tutorial6.mp4"},
+            {"titulo": "Visite nosso site", "arquivo": "video/Tutorial7.mp4"}
         ]
 
         # Variáveis para controle de reprodução
